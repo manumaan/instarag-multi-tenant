@@ -10,8 +10,10 @@ export interface AuthProps {
 /**
  * Cognito user pool for app sign-in.
  *
- * Self-signup is disabled: the single owner account is created out of band with
- * `aws cognito-idp admin-create-user`, so nobody else can ever reach the data.
+ * Self-signup is disabled: an account exists only because an admin invited it,
+ * which makes the invite flow the entire front door. The first admin account is
+ * created out of band with `aws cognito-idp admin-create-user` and added to the
+ * admin group; everyone after that arrives through the admin screen.
  * Sign-in goes through the Hosted UI (authorization code + PKCE) so this app
  * never handles a password itself.
  */
@@ -19,6 +21,8 @@ export class Auth extends Construct {
   readonly userPool: cognito.UserPool;
   readonly userPoolClient: cognito.UserPoolClient;
   readonly domain: cognito.UserPoolDomain;
+  /** Group name the API checks for on the admin routes. */
+  static readonly ADMIN_GROUP = 'admin';
 
   constructor(scope: Construct, id: string, props: AuthProps) {
     super(scope, id);
@@ -39,6 +43,19 @@ export class Auth extends Construct {
       mfaSecondFactor: { sms: false, otp: true },
       accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
       removalPolicy: RemovalPolicy.DESTROY,
+    });
+
+    /*
+     * Admin is a group, so the check is on a token claim rather than on an
+     * address written into the source. The first member is added out of band,
+     * like the owner account itself:
+     *   aws cognito-idp admin-add-user-to-group --user-pool-id <id> \
+     *     --username <email> --group-name admin
+     */
+    new cognito.CfnUserPoolGroup(this, 'AdminGroup', {
+      userPoolId: this.userPool.userPoolId,
+      groupName: Auth.ADMIN_GROUP,
+      description: 'May invite others and see what each account has cost.',
     });
 
     const callbackUrls = props.webOrigins.map((o) => `${o}/auth/callback`);

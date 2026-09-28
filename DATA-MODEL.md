@@ -65,13 +65,21 @@ Unchanged, still keyed by `media_id`. They are derived from content, so they are
   a save and no download and no tokens, because none were spent. Per-user cost falls as the
   shared library grows.
 
-### `invites` *(new)*
+### `invites` *(implemented)*
 - PK `email`, with `invited_by`, `created_at`, `expires_at` (TTL), `accepted_at`.
 - Identity stays in Cognito. Admin is a Cognito **group** (`admin`), not a hardcoded address:
   the JWT already carries `cognito:groups`, so the check is on a claim rather than a string
   in the source. `manu.awsian1@gmail.com` is the first member.
-- Self-signup stays disabled. An invite creates the Cognito user; the admin screen is a list
-  and a form over this table.
+- Self-signup stays disabled. An invite creates the Cognito user, which is what sends the
+  email; the invite row records who invited whom, and is deliberately *not* the thing that
+  grants access — Cognito is. Status is read from Cognito on each list rather than stored,
+  so a row cannot go stale claiming "pending" after someone has signed in.
+- **Withdrawing only works on an unaccepted invite.** Someone who has signed in has a
+  library, threads and a usage history; deleting their account from a screen called
+  "invites" would be a destructive act wearing an administrative label. Removing a member is
+  a different operation and should look like one.
+- The admin screen shows the `usage` ledger beside the invite list, since "who is here" and
+  "what have they cost" are the same question asked twice.
 
 ### `jobs`, `connections`, the Instagram token table
 - `jobs` unchanged.

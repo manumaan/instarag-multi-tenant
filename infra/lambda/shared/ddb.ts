@@ -10,6 +10,7 @@ export const TABLES = {
   frames: process.env.FRAMES_TABLE!,
   saves: process.env.SAVES_TABLE!,
   usage: process.env.USAGE_TABLE!,
+  invites: process.env.INVITES_TABLE!,
   jobs: process.env.JOBS_TABLE!,
 };
 

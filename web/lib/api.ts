@@ -252,6 +252,54 @@ export const warmSearch = () =>
     body: '{}',
   });
 
+export interface Invite {
+  email: string;
+  invited_by: string;
+  created_at: string;
+  /** From Cognito, not from the row: FORCE_CHANGE_PASSWORD, CONFIRMED, REVOKED. */
+  status: string;
+}
+
+export interface AccountUsage {
+  user_id: string;
+  period: string;
+  downloads?: number;
+  bytes_downloaded?: number;
+  tokens_in?: number;
+  tokens_out?: number;
+  analyses?: number;
+  plans?: number;
+  saves?: number;
+}
+
+/**
+ * Whether this session may see the admin screen.
+ *
+ * A convenience only. Every admin route re-checks the same claim server-side,
+ * because hiding a button is not a control.
+ */
+export async function isAdmin(): Promise<boolean> {
+  const { fetchAuthSession } = await import('aws-amplify/auth');
+  const session = await fetchAuthSession();
+  const groups = session.tokens?.idToken?.payload['cognito:groups'];
+  return Array.isArray(groups) && groups.map(String).includes('admin');
+}
+
+export const listInvites = () => call<{ invites: Invite[] }>('/admin/invites');
+
+export const sendInvite = (email: string) =>
+  call<{ invite: Invite }>('/admin/invites', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
+
+export const revokeInvite = (email: string) =>
+  call<{ revoked: string }>(`/admin/invites/${encodeURIComponent(email)}`, { method: 'DELETE' });
+
+export const adminUsage = () =>
+  call<{ period: string; accounts: AccountUsage[] }>('/admin/usage');
+
 /** Start a plan built from the whole library. Returns as soon as it is queued. */
 export const startPlan = (request: string, options: { mediaId?: string; threadId?: string } = {}) =>
   call<PlanStarted>('/ask', {

@@ -24,6 +24,7 @@ export class Storage extends Construct {
   readonly framesTable: dynamodb.Table;
   readonly savesTable: dynamodb.Table;
   readonly usageTable: dynamodb.Table;
+  readonly invitesTable: dynamodb.Table;
   readonly jobsTable: dynamodb.Table;
   readonly connectionsTable: dynamodb.Table;
   readonly captionFactsTable: dynamodb.Table;
@@ -205,6 +206,17 @@ export class Storage extends Construct {
       partitionKey: { name: 'user_id', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'period', type: dynamodb.AttributeType.STRING },
       ...durable,
+    });
+
+    /*
+     * Who invited whom, and when. Not the thing that grants access — Cognito is
+     * the source of truth for whether an account exists — so this stays a plain
+     * record with a TTL, and a forgotten invite cannot be accepted a year on.
+     */
+    this.invitesTable = new dynamodb.Table(this, 'InvitesTable', {
+      partitionKey: { name: 'email', type: dynamodb.AttributeType.STRING },
+      ...durable,
+      timeToLiveAttribute: 'expires_at',
     });
 
     this.jobsTable = new dynamodb.Table(this, 'JobsTable', {

@@ -136,3 +136,45 @@ test('a pipeline run knows who caused it', () => {
     assert.match(read(file), /input: JSON\.stringify\(\{\s*\n\s*userId,/, `${file} must set it`);
   }
 });
+
+test('every admin handler re-checks the group itself', () => {
+  const admin = read('lambda/admin/invites.ts');
+
+  // Signup is closed, so these routes are the only way an account comes into
+  // existence. A client that hides the screen is a convenience; this is the
+  // control, and it has to sit inside each handler rather than at the door.
+  const exported = admin.match(/export const (\w+) = handler/g) ?? [];
+  assert.ok(exported.length >= 4, 'expected create, list, revoke and usage');
+  assert.equal(
+    (admin.match(/requireAdmin\(event\)/g) ?? []).length,
+    exported.length,
+    'every exported admin handler must call requireAdmin',
+  );
+
+  // Not-found rather than forbidden: an admin surface should not confirm it
+  // exists to someone who may not use it.
+  assert.match(admin, /new HttpError\(404, 'not found'\)/);
+
+  // Admin is a claim, never an address in the source.
+  assert.ok(!/manu|@gmail|@example/i.test(admin), 'no address may be hardcoded as admin');
+  assert.match(read('lambda/shared/http.ts'), /callerGroups\(event\)\.includes\('admin'\)/);
+});
+
+test('an accepted invite cannot be withdrawn as if it were pending', () => {
+  const admin = read('lambda/admin/invites.ts');
+  // Someone who has signed in has a library, threads and a usage history.
+  // Deleting them from a screen called "invites" would be a destructive act
+  // wearing an administrative label.
+  assert.match(admin, /status !== 'FORCE_CHANGE_PASSWORD'/);
+  assert.match(admin, /would delete a member rather than withdraw an invite/);
+});
+
+test('the admin handlers get named Cognito actions on one pool', () => {
+  const api = read('lib/api.ts');
+  // A wildcard on cognito-idp would include changing passwords and reading
+  // every user's attributes. Each handler gets only what it calls.
+  assert.ok(!/'cognito-idp:\*'/.test(api));
+  assert.match(api, /actions: \['cognito-idp:AdminCreateUser'\]/);
+  assert.match(api, /actions: \['cognito-idp:AdminGetUser', 'cognito-idp:AdminDeleteUser'\]/);
+  assert.ok(!/resources: \['\*'\][\s\S]{0,80}cognito/.test(api), 'never a wildcard resource');
+});

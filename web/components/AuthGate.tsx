@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
+import { isAdmin } from '@/lib/api';
 import { fetchAuthSession, getCurrentUser, signInWithRedirect, signOut } from 'aws-amplify/auth';
 import { authConfigured, configureAmplify } from '@/lib/amplify';
 
@@ -9,6 +11,15 @@ type State = { phase: 'loading' } | { phase: 'signed-out' } | { phase: 'signed-i
 /** Wraps the app: nothing renders until the single owner account is signed in. */
 export default function AuthGate({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<State>({ phase: 'loading' });
+  // Only decides whether to show the link; the routes behind it re-check.
+  const [admin, setAdmin] = useState(false);
+
+  useEffect(() => {
+    if (state.phase !== 'signed-in') return;
+    void isAdmin()
+      .then(setAdmin)
+      .catch(() => setAdmin(false));
+  }, [state.phase]);
 
   useEffect(() => {
     configureAmplify();
@@ -65,6 +76,11 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     <>
       <header className="topbar">
         <strong>Reel Lens</strong>
+        {admin && (
+          <Link className="btn small" href="/admin">
+            Admin
+          </Link>
+        )}
         <span className="muted small">{state.email}</span>
         <button className="ghost small" onClick={() => signOut()}>
           Sign out

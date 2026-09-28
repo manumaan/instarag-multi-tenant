@@ -83,6 +83,7 @@ export class Api extends Construct {
       FRAMES_TABLE: storage.framesTable.tableName,
       SAVES_TABLE: storage.savesTable.tableName,
       USAGE_TABLE: storage.usageTable.tableName,
+      INVITES_TABLE: storage.invitesTable.tableName,
       JOBS_TABLE: storage.jobsTable.tableName,
       TRANSCRIPT_SEGMENTS_TABLE: storage.transcriptSegmentsTable.tableName,
     };
@@ -300,6 +301,59 @@ export class Api extends Construct {
     // No Bedrock grant: Lens web reads entities off a frame and summarises the
     // search results, both on the Anthropic API, and it embeds nothing.
 
+    /*
+     * Admin. Signup is closed, so these routes are the only way an account comes
+     * into existence — which is why the group claim is re-checked inside every
+     * handler and not only at the door.
+     */
+    const adminDir = path.join(__dirname, '..', 'lambda', 'admin');
+    const makeAdminFn = (name: string, exportName: string) =>
+      new NodejsFunction(this, name, {
+        entry: path.join(adminDir, 'invites.ts'),
+        handler: exportName,
+        runtime: lambda.Runtime.NODEJS_22_X,
+        architecture: lambda.Architecture.ARM_64,
+        memorySize: 512,
+        timeout: Duration.seconds(30),
+        environment: {
+          INVITES_TABLE: storage.invitesTable.tableName,
+          USAGE_TABLE: storage.usageTable.tableName,
+          USER_POOL_ID: props.auth.userPool.userPoolId,
+        },
+        logGroup: new logs.LogGroup(this, `${name}Logs`, { retention: logs.RetentionDays.TWO_WEEKS }),
+        bundling: { minify: true, sourceMap: true, format: OutputFormat.CJS, target: 'node22', externalModules: [] },
+      });
+
+    const inviteCreate = makeAdminFn('AdminInviteCreate', 'create');
+    const inviteList = makeAdminFn('AdminInviteList', 'list');
+    const inviteRevoke = makeAdminFn('AdminInviteRevoke', 'revoke');
+    const adminUsage = makeAdminFn('AdminUsage', 'usage');
+
+    // Named actions on this pool only — never a wildcard on cognito-idp, which
+    // would include changing passwords and reading every user's attributes.
+    inviteCreate.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['cognito-idp:AdminCreateUser'],
+        resources: [props.auth.userPool.userPoolArn],
+      }),
+    );
+    inviteList.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['cognito-idp:AdminGetUser'],
+        resources: [props.auth.userPool.userPoolArn],
+      }),
+    );
+    inviteRevoke.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['cognito-idp:AdminGetUser', 'cognito-idp:AdminDeleteUser'],
+        resources: [props.auth.userPool.userPoolArn],
+      }),
+    );
+    allow(inviteCreate, ['dynamodb:PutItem'], [storage.invitesTable.tableArn]);
+    allow(inviteList, ['dynamodb:Scan'], [storage.invitesTable.tableArn]);
+    allow(inviteRevoke, ['dynamodb:DeleteItem'], [storage.invitesTable.tableArn]);
+    allow(adminUsage, ['dynamodb:Scan'], [storage.usageTable.tableArn]);
+
     const listThreads = makeSearchFn('ListThreads', 'list-threads.ts');
     allow(listThreads, ['dynamodb:Query'], [`${storage.threadsTable.tableArn}/index/byCreatedAt`]);
 
@@ -349,6 +403,10 @@ export class Api extends Construct {
       // Focusing the question box hits this, so the collection is awake by the
       // time there is a question to run.
       [apigw.HttpMethod.POST, '/ask/warm', ask],
+      [apigw.HttpMethod.POST, '/admin/invites', inviteCreate],
+      [apigw.HttpMethod.GET, '/admin/invites', inviteList],
+      [apigw.HttpMethod.DELETE, '/admin/invites/{email}', inviteRevoke],
+      [apigw.HttpMethod.GET, '/admin/usage', adminUsage],
       [apigw.HttpMethod.GET, '/threads', listThreads],
       [apigw.HttpMethod.GET, '/threads/{id}', getThread],
       [apigw.HttpMethod.POST, '/lens/uploads', lensUpload],
