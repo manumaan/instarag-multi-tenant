@@ -126,7 +126,12 @@ export const listMedia = (cursor?: string) =>
 
 export const getMedia = (id: string) => call<MediaDetail>(`/media/${id}`);
 
-export const deleteMedia = (id: string) => call<{ deleted: string }>(`/media/${id}`, { method: 'DELETE' });
+/**
+ * Removes it from your library. Content is shared, so this unsaves rather than
+ * destroys: the reel only goes when its last saver lets go of it.
+ */
+export const deleteMedia = (id: string) =>
+  call<{ removedFromLibrary: string; contentKept: boolean }>(`/media/${id}`, { method: 'DELETE' });
 
 export interface RetryResult {
   mediaId: string;

@@ -114,6 +114,8 @@ export class Api extends Construct {
       fn.addToRolePolicy(new iam.PolicyStatement({ actions, resources }));
 
     const createUpload = makeFn('CreateUpload', 'create-upload.ts');
+    // saves: writes a save when the record is created.
+    allow(createUpload, ['dynamodb:PutItem'], [storage.savesTable.tableArn]);
     allow(createUpload, ['s3:PutObject'], [mediaObjects]);
     allow(createUpload, ['dynamodb:PutItem'], [storage.mediaTable.tableArn]);
 
@@ -127,26 +129,32 @@ export class Api extends Construct {
     this.completeUploadFunction = completeUpload;
 
     const createFromUrl = makeFn('CreateFromUrl', 'create-from-url.ts');
+    // saves: writes a save, and reuses content anyone already ingested.
+    allow(createFromUrl, ['dynamodb:PutItem'], [storage.savesTable.tableArn]);
     allow(createFromUrl, ['dynamodb:PutItem'], [storage.mediaTable.tableArn]);
     // Re-pasting a reel we already hold must not spend Instagram's anonymous
     // rate-limit budget on a second download.
     allow(
       createFromUrl,
       ['dynamodb:Query'],
-      [`${storage.mediaTable.tableArn}/index/${Storage.MEDIA_BY_PERMALINK}`],
+      [storage.mediaTable.tableArn],
     );
     this.createFromUrlFunction = createFromUrl;
 
     const listMedia = makeFn('ListMedia', 'list-media.ts');
+    // saves: the library *is* this query.
+    allow(listMedia, ['dynamodb:Query'], [storage.savesTable.tableArn, `${storage.savesTable.tableArn}/index/*`]);
     // Presigning the grid's thumbnails needs read access to the frames.
     allow(listMedia, ['s3:GetObject'], [storage.mediaBucket.arnForObjects('media/*')]);
     allow(
       listMedia,
       ['dynamodb:Query'],
-      [`${storage.mediaTable.tableArn}/index/${Storage.MEDIA_BY_CREATED_AT}`],
+      [storage.savesTable.tableArn, `${storage.savesTable.tableArn}/index/${Storage.SAVES_BY_SAVED_AT}`],
     );
 
     const getMedia = makeFn('GetMedia', 'get-media.ts');
+    // saves: holding it is the authorisation.
+    allow(getMedia, ['dynamodb:GetItem'], [storage.savesTable.tableArn]);
     allow(getMedia, ['dynamodb:GetItem'], [storage.mediaTable.tableArn]);
     allow(getMedia, ['dynamodb:Query'], [
       storage.framesTable.tableArn,
@@ -157,6 +165,8 @@ export class Api extends Construct {
     // Longer than the rest: it also clears the vector index, and the first
     // call after the collection has scaled to zero waits for it to warm up.
     const deleteMedia = makeFn('DeleteMedia', 'delete-media.ts', { timeout: Duration.seconds(60) });
+    // saves: unsave, then ask who is left.
+    allow(deleteMedia, ['dynamodb:GetItem', 'dynamodb:DeleteItem', 'dynamodb:Query'], [storage.savesTable.tableArn, `${storage.savesTable.tableArn}/index/*`]);
     allow(deleteMedia, ['dynamodb:GetItem', 'dynamodb:DeleteItem'], [storage.mediaTable.tableArn]);
     allow(deleteMedia, ['dynamodb:Query', 'dynamodb:BatchWriteItem'], [storage.framesTable.tableArn]);
     allow(deleteMedia, ['s3:DeleteObject'], [mediaObjects]);
@@ -289,6 +299,8 @@ export class Api extends Construct {
     // Retrying is a real re-run: it clears whatever a half-finished pipeline
     // left behind, so it needs the same reach as delete plus the pipeline.
     const retryMedia = makeFn('RetryMedia', 'retry-media.ts', { timeout: Duration.seconds(60) });
+    // saves: you can only retry what you hold.
+    allow(retryMedia, ['dynamodb:GetItem'], [storage.savesTable.tableArn]);
     this.retryMediaFunction = retryMedia;
     retryMedia.addEnvironment('CAPTION_FACTS_TABLE', storage.captionFactsTable.tableName);
     // Clearing stale index documents needs the collection endpoint; without it

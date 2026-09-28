@@ -1,8 +1,9 @@
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { QueryCommand } from '@aws-sdk/lib-dynamodb';
-import { ddb, TABLES, MEDIA_BY_CREATED_AT, MEDIA_ENTITY, decodeCursor, encodeCursor } from '../shared/ddb';
-import { handler } from '../shared/http';
+import { BatchGetCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { ddb, TABLES, decodeCursor, encodeCursor } from '../shared/ddb';
+import { callerId, handler } from '../shared/http';
+import { SAVES_BY_SAVED_AT } from '../shared/saves';
 import type { MediaRecord } from '../shared/media';
 
 const s3 = new S3Client({});
@@ -11,29 +12,51 @@ const DEFAULT_LIMIT = 40;
 const MAX_LIMIT = 100;
 const URL_TTL_SECONDS = 900;
 
-/** GET /media?limit&cursor — newest-first library listing. */
+/**
+ * GET /media?limit&cursor — the caller's library, newest save first.
+ *
+ * Two steps, because a library is a set of saves over shared content: page the
+ * caller's saves, then fetch the content those point at. Ordering lives on the
+ * save, not the reel — you see things in the order *you* took them, which is
+ * also why the same reel can sit in two people's libraries at different places.
+ */
 export const main = handler(async (event) => {
+  const userId = callerId(event);
   const limitParam = Number(event.queryStringParameters?.limit);
   const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, MAX_LIMIT) : DEFAULT_LIMIT;
 
-  const result = await ddb.send(
+  const saves = await ddb.send(
     new QueryCommand({
-      TableName: TABLES.media,
-      IndexName: MEDIA_BY_CREATED_AT,
-      KeyConditionExpression: '#entity = :entity',
-      ExpressionAttributeNames: { '#entity': 'entity' },
-      ExpressionAttributeValues: { ':entity': MEDIA_ENTITY },
+      TableName: TABLES.saves,
+      IndexName: SAVES_BY_SAVED_AT,
+      KeyConditionExpression: 'user_id = :u',
+      ExpressionAttributeValues: { ':u': userId },
       ScanIndexForward: false,
       Limit: limit,
       ExclusiveStartKey: decodeCursor(event.queryStringParameters?.cursor),
     }),
   );
 
-  const items = (result.Items ?? []) as MediaRecord[];
+  const ids = (saves.Items ?? []).map((save) => String(save.media_id));
+  if (ids.length === 0) return { items: [], cursor: undefined };
+
+  const fetched = await ddb.send(
+    new BatchGetCommand({ RequestItems: { [TABLES.media]: { Keys: ids.map((id) => ({ id })) } } }),
+  );
+  const byId = new Map(
+    ((fetched.Responses?.[TABLES.media] ?? []) as MediaRecord[]).map((record) => [record.id, record]),
+  );
+
+  // Ordered by the save, and skipping any whose content has gone: a save that
+  // outlives its reel is a row to ignore, not an error to raise.
+  const items = ids.flatMap((id) => {
+    const record = byId.get(id);
+    return record ? [record] : [];
+  });
 
   return {
     items: await Promise.all(items.map(withThumbnail)),
-    cursor: encodeCursor(result.LastEvaluatedKey),
+    cursor: encodeCursor(saves.LastEvaluatedKey),
   };
 });
 

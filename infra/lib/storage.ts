@@ -31,13 +31,10 @@ export class Storage extends Construct {
   readonly messagesTable: dynamodb.Table;
 
   /** Constant partition key value for the media recency index. */
-  static readonly MEDIA_ENTITY = 'media';
   /** GSI on the media table: newest-first library listing. */
   static readonly SAVES_BY_SAVED_AT = 'bySavedAt';
   static readonly SAVES_BY_MEDIA = 'byMedia';
-  static readonly MEDIA_BY_CREATED_AT = 'byCreatedAt';
   /** Sparse GSI: find an already-ingested reel by its permalink. */
-  static readonly MEDIA_BY_PERMALINK = 'byPermalink';
   /** GSI on the jobs table: all jobs for one media item. */
   static readonly JOBS_BY_MEDIA = 'byMedia';
   /** GSI on the threads table: newest-first thread list. */
@@ -106,6 +103,15 @@ export class Storage extends Construct {
       ],
     });
 
+    /*
+     * Global content, keyed by the reel itself: the Instagram shortcode for a
+     * pasted link, a uuid for an upload. No tenant column — two people who save
+     * the same reel share this row, its frames and its index documents.
+     *
+     * No secondary indexes. The shortcode *is* the key, so deduplication is a
+     * GetItem rather than a byPermalink query, and library recency belongs to
+     * `saves` where it partitions by user instead of on a constant.
+     */
     this.mediaTable = new dynamodb.Table(this, 'MediaTable', {
       partitionKey: { name: 'id', type: dynamodb.AttributeType.STRING },
       ...durable,
@@ -113,13 +119,7 @@ export class Storage extends Construct {
       stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
     });
     // Library grid: one hot partition is fine for a single-user library.
-    this.mediaTable.addGlobalSecondaryIndex({
-      indexName: Storage.MEDIA_BY_CREATED_AT,
-      partitionKey: { name: 'entity', type: dynamodb.AttributeType.STRING },
-      sortKey: { name: 'created_at', type: dynamodb.AttributeType.STRING },
-      projectionType: dynamodb.ProjectionType.ALL,
-    });
-
+    
     // One row per media item: hashtags, mentions, entities, places, language, cta.
     this.captionFactsTable = new dynamodb.Table(this, 'CaptionFactsTable', {
       partitionKey: { name: 'media_id', type: dynamodb.AttributeType.STRING },
@@ -154,13 +154,7 @@ export class Storage extends Construct {
 
     // Sparse: only items with a permalink appear, which is what makes a
     // re-paste of the same reel cheap to detect without scanning the library.
-    this.mediaTable.addGlobalSecondaryIndex({
-      indexName: Storage.MEDIA_BY_PERMALINK,
-      partitionKey: { name: 'permalink', type: dynamodb.AttributeType.STRING },
-      projectionType: dynamodb.ProjectionType.INCLUDE,
-      nonKeyAttributes: ['status', 'created_at', 'source', 'type'],
-    });
-
+    
     this.framesTable = new dynamodb.Table(this, 'FramesTable', {
       partitionKey: { name: 'media_id', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'ts_ms', type: dynamodb.AttributeType.NUMBER },

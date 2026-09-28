@@ -2,7 +2,8 @@ import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { GetCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { ddb, TABLES } from '../shared/ddb';
-import { handler, notFound, pathParam } from '../shared/http';
+import { callerId, handler, notFound, pathParam } from '../shared/http';
+import { hasSaved } from '../shared/saves';
 import type { MediaRecord } from '../shared/media';
 
 const s3 = new S3Client({});
@@ -13,6 +14,14 @@ const URL_TTL_SECONDS = 900;
 /** GET /media/{id} — record, playback URL, keyframe filmstrip and transcript. */
 export const main = handler(async (event) => {
   const id = pathParam(event, 'id');
+
+  /*
+   * Not found, deliberately, rather than forbidden: a caller who has not saved
+   * a reel should not be able to learn whether it exists by asking. The content
+   * is shared, so "exists" and "yours" are different questions and only one of
+   * them is answerable.
+   */
+  if (!(await hasSaved(callerId(event), id))) throw notFound('media not found');
 
   const result = await ddb.send(new GetCommand({ TableName: TABLES.media, Key: { id } }));
   const media = result.Item as MediaRecord | undefined;

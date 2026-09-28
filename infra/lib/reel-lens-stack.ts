@@ -132,6 +132,11 @@ export class ReelLensStack extends Stack {
       fn.addEnvironment('STATE_MACHINE_ARN', pipeline.stateMachine.stateMachineArn);
     }
 
+    // Connected sync ingests the account's own posts for whoever connected it,
+    // so it both reads their saves (to skip what they already hold) and writes
+    // new ones.
+    storage.savesTable.grantReadWriteData(connected.syncFunction);
+
     // An uploaded carousel is the one ingest path with no ffmpeg behind it, so
     // it asks the thumbnailer directly rather than getting one on the way past.
     pipeline.thumbnailFunction.grantInvoke(api.completeUploadFunction);

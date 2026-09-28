@@ -8,13 +8,10 @@ export const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
 export const TABLES = {
   media: process.env.MEDIA_TABLE!,
   frames: process.env.FRAMES_TABLE!,
+  saves: process.env.SAVES_TABLE!,
   jobs: process.env.JOBS_TABLE!,
 };
 
-export const MEDIA_BY_CREATED_AT = 'byCreatedAt';
-export const MEDIA_BY_PERMALINK = 'byPermalink';
-/** Constant partition key for the recency index (single-user library). */
-export const MEDIA_ENTITY = 'media';
 
 export function encodeCursor(key: Record<string, unknown> | undefined): string | undefined {
   return key ? Buffer.from(JSON.stringify(key), 'utf8').toString('base64url') : undefined;

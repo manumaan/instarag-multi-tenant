@@ -17,7 +17,7 @@ export type MediaType = 'reel' | 'post' | 'carousel';
 export interface MediaRecord {
   id: string;
   /** Constant, exists only to give the recency GSI a partition key. */
-  entity: string;
+
   source: MediaSource;
   type: MediaType;
   status: MediaStatus;

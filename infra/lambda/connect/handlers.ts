@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { SFNClient, StartExecutionCommand } from '@aws-sdk/client-sfn';
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import { BatchWriteCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
-import { ddb, TABLES, MEDIA_ENTITY } from '../shared/ddb';
+import { BatchGetCommand, BatchWriteCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
+import { ddb, TABLES } from '../shared/ddb';
 import { slideTsMs } from '../shared/media';
-import { badRequest, handler, parseJsonBody } from '../shared/http';
+import { badRequest, callerId, handler, parseJsonBody } from '../shared/http';
+import { saveMedia, savedMediaIds } from '../shared/saves';
 import type { MediaRecord } from '../shared/media';
 import {
   buildAuthorizeUrl,
@@ -115,12 +116,13 @@ export const disconnect = handler(async () => {
  * public-page download path.
  */
 export const sync = handler(async (event) => {
+  const userId = callerId(event);
   const { limit } = parseJsonBody<{ limit?: number }>(event);
   const connection = await readConnection();
   if (!connection) throw badRequest('Instagram is not connected');
 
   const media = await listMedia(connection.access_token, limit ?? 25);
-  const existing = await existingIgMediaIds();
+  const existing = await existingIgMediaIds(userId);
 
   const results: Array<{ ig_media_id: string; status: string; mediaId?: string; reason?: string }> = [];
 
@@ -143,7 +145,7 @@ export const sync = handler(async (event) => {
       });
       continue;
     }
-    const mediaId = item.media_type === 'CAROUSEL_ALBUM' ? await ingestCarousel(item) : await ingest(item);
+    const mediaId = item.media_type === 'CAROUSEL_ALBUM' ? await ingestCarousel(item, userId) : await ingest(item, userId);
     results.push({ ig_media_id: item.id, status: 'ingesting', mediaId });
   }
 
@@ -151,23 +153,38 @@ export const sync = handler(async (event) => {
   return { checked: media.length, results };
 });
 
-async function existingIgMediaIds(): Promise<Set<string>> {
-  const result = await ddb.send(
-    new QueryCommand({
-      TableName: TABLES.media,
-      IndexName: 'byCreatedAt',
-      KeyConditionExpression: '#entity = :entity',
-      ExpressionAttributeNames: { '#entity': 'entity' },
-      ExpressionAttributeValues: { ':entity': MEDIA_ENTITY },
-      ProjectionExpression: 'ig_media_id',
+/**
+ * Which of the account's posts are already held, so a sync does not re-ingest.
+ *
+ * Read from the connecting user's saves rather than from a scan of all content:
+ * the question is "does this person already have it", and with content shared
+ * the two are no longer the same question.
+ *
+ * TODO(multi-tenant): connected mode is not yet per-user — the token table still
+ * has to be re-keyed to user_id, which is its own step. This reads saves so the
+ * shape is right now and only the key changes then.
+ */
+async function existingIgMediaIds(userId: string): Promise<Set<string>> {
+  const saved = await savedMediaIds(userId);
+  if (saved.length === 0) return new Set();
+  const fetched = await ddb.send(
+    new BatchGetCommand({
+      RequestItems: {
+        [TABLES.media]: {
+          Keys: saved.map((id: string) => ({ id })),
+          ProjectionExpression: 'ig_media_id',
+        },
+      },
     }),
   );
   return new Set(
-    (result.Items ?? []).map((item) => item.ig_media_id).filter((id): id is string => typeof id === 'string'),
+    (fetched.Responses?.[TABLES.media] ?? [])
+      .map((item: Record<string, unknown>) => item.ig_media_id)
+      .filter((id): id is string => typeof id === 'string'),
   );
 }
 
-async function ingest(item: IgMedia): Promise<string> {
+async function ingest(item: IgMedia, userId: string): Promise<string> {
   const id = randomUUID();
   const s3Key = `media/${id}/original.mp4`;
 
@@ -181,7 +198,6 @@ async function ingest(item: IgMedia): Promise<string> {
 
   const record: MediaRecord = {
     id,
-    entity: MEDIA_ENTITY,
     source: 'api',
     type: 'reel',
     status: 'queued',
@@ -197,6 +213,8 @@ async function ingest(item: IgMedia): Promise<string> {
     uploader: item.username,
   };
   await ddb.send(new PutCommand({ TableName: TABLES.media, Item: record }));
+  // The record is the content; the save is this caller's claim on it.
+  await saveMedia(userId, record.id);
 
   if (STATE_MACHINE_ARN) {
     await sfn.send(
@@ -221,7 +239,7 @@ const FRAMES_TABLE = process.env.FRAMES_TABLE!;
  * A carousel's slides are downloaded straight in as frames, and the pipeline
  * joins at the vision pass: there is no video to extract from.
  */
-async function ingestCarousel(item: IgMedia): Promise<string> {
+async function ingestCarousel(item: IgMedia, userId: string): Promise<string> {
   const slides = carouselSlides(item);
   const id = randomUUID();
   const now = new Date().toISOString();
@@ -253,7 +271,6 @@ async function ingestCarousel(item: IgMedia): Promise<string> {
 
   const record: MediaRecord = {
     id,
-    entity: MEDIA_ENTITY,
     source: 'api',
     type: 'carousel',
     status: 'queued',
@@ -270,6 +287,8 @@ async function ingestCarousel(item: IgMedia): Promise<string> {
     uploader: item.username,
   };
   await ddb.send(new PutCommand({ TableName: TABLES.media, Item: record }));
+  // The record is the content; the save is this caller's claim on it.
+  await saveMedia(userId, record.id);
 
   if (STATE_MACHINE_ARN) {
     await sfn.send(

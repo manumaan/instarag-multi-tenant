@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import * as path from 'node:path';
 import { App } from 'aws-cdk-lib';
 import { Template, Match } from 'aws-cdk-lib/assertions';
 import { ReelLensStack } from '../lib/reel-lens-stack';
@@ -584,15 +586,34 @@ test('connected mode cannot reach other accounts: only own-media scope is reques
   }
 });
 
-test('a re-pasted reel is found by permalink rather than downloaded again', () => {
+test('a re-pasted reel is deduplicated by its key, for everyone', () => {
   const template = synth();
   const media = Object.values(template.findResources('AWS::DynamoDB::Table')).find((t) =>
     JSON.stringify(t.Properties.KeySchema) === JSON.stringify([{ AttributeName: 'id', KeyType: 'HASH' }]),
   );
-  const indexes = (media?.Properties.GlobalSecondaryIndexes ?? []) as Array<{ IndexName: string }>;
+
+  /*
+   * This used to assert a byPermalink GSI. The intent is unchanged — a re-paste
+   * must not cost another anonymous download — but the mechanism is better: the
+   * Instagram shortcode *is* the media id, so the check is a GetItem and no
+   * index is needed. It is also now global rather than per-library: if anyone
+   * has ingested the reel, nobody downloads it again.
+   */
+  assert.ok(media, 'no content table');
   assert.ok(
-    indexes.some((i) => i.IndexName === 'byPermalink'),
-    'without this index, every paste of the same reel costs another anonymous download',
+    !media!.Properties.GlobalSecondaryIndexes,
+    'content needs no secondary index: the shortcode is the key, and recency lives on saves',
+  );
+
+  const ingest = readFileSync(
+    path.join(__dirname, '..', 'lambda/media/create-from-url.ts'),
+    'utf8',
+  );
+  assert.match(ingest, /const mediaId = parsed\.shortcode/, 'the shortcode must be the id');
+  assert.match(
+    ingest,
+    /existing\.status !== 'failed'[\s\S]{0,200}saveMedia/,
+    'content anyone already holds must be saved, not re-fetched',
   );
 });
 

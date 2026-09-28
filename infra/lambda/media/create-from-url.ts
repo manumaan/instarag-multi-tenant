@@ -1,9 +1,8 @@
-import { randomUUID } from 'node:crypto';
 import { SFNClient, StartExecutionCommand } from '@aws-sdk/client-sfn';
-import { PutCommand } from '@aws-sdk/lib-dynamodb';
-import { QueryCommand } from '@aws-sdk/lib-dynamodb';
-import { ddb, TABLES, MEDIA_ENTITY, MEDIA_BY_PERMALINK } from '../shared/ddb';
-import { badRequest, handler, parseJsonBody } from '../shared/http';
+import { GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
+import { ddb, TABLES } from '../shared/ddb';
+import { badRequest, callerId, handler, parseJsonBody } from '../shared/http';
+import { saveMedia } from '../shared/saves';
 import { parseInstagramUrl, type MediaRecord } from '../shared/media';
 
 const sfn = new SFNClient({});
@@ -12,47 +11,79 @@ const STATE_MACHINE_ARN = process.env.STATE_MACHINE_ARN;
 const JOB_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 /**
- * POST /media/url — register a pasted reel permalink and fetch it.
+ * POST /media/url — save a pasted permalink, fetching it only if nobody has.
  *
- * The pipeline downloads the video behind a public permalink, then runs the
- * same extraction the upload path uses. Public reels only: no credentials, no
- * cookies, no logged-in session.
+ * The shortcode is the media id, so the same link is the same row for everyone.
+ * That makes deduplication a GetItem, and makes it *global*: if anyone has
+ * already ingested this reel, saving it costs one write — no Instagram request
+ * against a rate limit that is the binding constraint as users arrive, and no
+ * second 13.2¢ vision pass for an answer that would be identical.
  *
- * A reel already in the library is returned as-is rather than fetched again.
- * Instagram rate-limits anonymous access, and re-downloading something we
- * already hold spends that budget for nothing — a burst of repeats is exactly
- * what triggers the login wall.
+ * What stays private is the save. Sharing the analysis is safe because the reel
+ * is public; sharing *that you saved it* would not be.
  */
 export const main = handler(async (event) => {
+  const userId = callerId(event);
   const { url } = parseJsonBody<{ url?: string }>(event);
   if (!url) throw badRequest('url is required');
 
   const parsed = parseInstagramUrl(url);
   if (!parsed) throw badRequest('url must be an instagram.com reel or post permalink');
 
-  const existing = await findByPermalink(parsed.permalink);
-  if (existing) {
-    return { mediaId: existing.id, media: existing, alreadyInLibrary: true };
+  // The shortcode is the id: one row per reel, for everyone.
+  const mediaId = parsed.shortcode;
+  const existing = (
+    await ddb.send(new GetCommand({ TableName: TABLES.media, Key: { id: mediaId } }))
+  ).Item as MediaRecord | undefined;
+
+  // Anything not failed is either done or on its way, and either way this
+  // caller just needs to hold it. A failed one is worth another attempt —
+  // re-pasting after a rate limit clears is the point of the Retry button.
+  if (existing && existing.status !== 'failed') {
+    await saveMedia(userId, mediaId);
+    return { mediaId, media: existing, alreadyIngested: true };
   }
 
   const record: MediaRecord = {
-    id: randomUUID(),
-    entity: MEDIA_ENTITY,
+    id: mediaId,
     source: 'url',
     type: parsed.type,
     status: 'queued',
     created_at: new Date().toISOString(),
     permalink: parsed.permalink,
   };
-  await ddb.send(new PutCommand({ TableName: TABLES.media, Item: record }));
+
+  try {
+    await ddb.send(
+      new PutCommand({
+        TableName: TABLES.media,
+        Item: record,
+        // Two people pasting the same new link at once would otherwise both
+        // write it and both start a pipeline. The loser of this condition falls
+        // through to saving what the winner created.
+        ConditionExpression: 'attribute_not_exists(id) OR #status = :failed',
+        ExpressionAttributeNames: { '#status': 'status' },
+        ExpressionAttributeValues: { ':failed': 'failed' },
+      }),
+    );
+  } catch (err) {
+    if ((err as { name?: string }).name !== 'ConditionalCheckFailedException') throw err;
+    await saveMedia(userId, mediaId);
+    const winner = (
+      await ddb.send(new GetCommand({ TableName: TABLES.media, Key: { id: mediaId } }))
+    ).Item as MediaRecord | undefined;
+    return { mediaId, media: winner ?? record, alreadyIngested: true };
+  }
+
+  await saveMedia(userId, mediaId);
 
   if (STATE_MACHINE_ARN) {
     await sfn.send(
       new StartExecutionCommand({
         stateMachineArn: STATE_MACHINE_ARN,
-        name: `${record.id}-${Date.now()}`,
+        name: `${mediaId}-${Date.now()}`,
         input: JSON.stringify({
-          mediaId: record.id,
+          mediaId,
           source: record.source,
           jobExpiresAt: String(Math.floor(Date.now() / 1000) + JOB_TTL_SECONDS),
         }),
@@ -60,26 +91,5 @@ export const main = handler(async (event) => {
     );
   }
 
-  return { mediaId: record.id, media: record };
+  return { mediaId, media: record };
 });
-
-/**
- * An earlier ingest of the same reel, if there is one worth reusing.
- *
- * A failed attempt is not reused: the whole point of re-pasting after a rate
- * limit clears is to try again.
- */
-async function findByPermalink(permalink: string): Promise<MediaRecord | undefined> {
-  const found = await ddb.send(
-    new QueryCommand({
-      TableName: TABLES.media,
-      IndexName: MEDIA_BY_PERMALINK,
-      KeyConditionExpression: 'permalink = :permalink',
-      ExpressionAttributeValues: { ':permalink': permalink },
-    }),
-  );
-  const usable = (found.Items ?? [])
-    .filter((item) => item.status !== 'failed')
-    .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
-  return usable[0] as MediaRecord | undefined;
-}

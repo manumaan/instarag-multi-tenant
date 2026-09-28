@@ -24,7 +24,7 @@ in a niche where the same clips circulate.
 
 Changes from the MVP are marked. Everything unmarked is as it is today.
 
-### `media` — global content
+### `media` — global content *(implemented)*
 - PK `media_id`
 - **Changed:** for a url-sourced post the id is the Instagram **shortcode**, not a uuid, so
   the same link resolves to the same row with no lookup. Uploads keep a uuid; an upload is
@@ -37,7 +37,7 @@ Changes from the MVP are marked. Everything unmarked is as it is today.
   `cover_s3_key`, `thumb_s3_key`. No `user_id`: status is a property of the content's
   analysis, not of anyone's relationship to it.
 
-### `saves` — who has what *(new)*
+### `saves` — who has what *(new, implemented)*
 - PK `user_id`, SK `media_id` — answers "does this user have this reel" in one get, which is
   what the save path and every authorisation check need.
 - GSI `bySavedAt`: PK `user_id`, SK `saved_at` — the library grid, newest first.
@@ -99,6 +99,18 @@ save, and per-user document copies throw away the dedupe the whole design rests 
 **Known ceiling:** that filter carries the caller's whole save list, so it grows with the
 library. Fine at hundreds; wants measuring before thousands — the same
 measure-before-you-buy habit that showed the rate limit is not yet a real problem.
+
+## Deleting means unsaving
+
+Not cosmetic, and worth stating plainly: content is shared, so `DELETE /media/{id}` removes
+the caller's save and purges the reel only when the last saver lets go. Otherwise the first
+person to tidy up would empty a reel out of everyone else's library, taking the 13.2¢
+analysis and the downloaded video with it. Nothing is reference-counted — `saves.byMedia` is
+asked who is left, which is the same question and cannot drift.
+
+`GET /media/{id}` and retry answer **not found** rather than forbidden for a reel the caller
+has not saved. With content shared, "exists" and "yours" are different questions and only
+one of them is any of the caller's business.
 
 ## S3
 

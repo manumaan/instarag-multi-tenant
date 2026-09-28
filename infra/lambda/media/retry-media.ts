@@ -1,7 +1,8 @@
 import { SFNClient, StartExecutionCommand } from '@aws-sdk/client-sfn';
 import { GetCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { ddb, TABLES } from '../shared/ddb';
-import { badRequest, handler, notFound, pathParam } from '../shared/http';
+import { badRequest, callerId, handler, notFound, pathParam } from '../shared/http';
+import { hasSaved } from '../shared/saves';
 import type { MediaRecord } from '../shared/media';
 import { purgeDerived, purgeObjects } from './purge';
 
@@ -19,6 +20,10 @@ const JOB_TTL_SECONDS = 30 * 24 * 60 * 60;
  */
 export const main = handler(async (event) => {
   const id = pathParam(event, 'id');
+
+  // Same reasoning as get-media: not-found rather than forbidden, so a caller
+  // cannot probe for reels outside their library.
+  if (!(await hasSaved(callerId(event), id))) throw notFound('media not found');
 
   const result = await ddb.send(new GetCommand({ TableName: TABLES.media, Key: { id } }));
   const media = result.Item as MediaRecord | undefined;

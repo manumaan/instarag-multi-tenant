@@ -2,8 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { PutCommand } from '@aws-sdk/lib-dynamodb';
-import { ddb, TABLES, MEDIA_ENTITY } from '../shared/ddb';
-import { badRequest, handler, parseJsonBody } from '../shared/http';
+import { ddb, TABLES } from '../shared/ddb';
+import { badRequest, callerId, handler, parseJsonBody } from '../shared/http';
+import { saveMedia } from '../shared/saves';
 import {
   ALLOWED_CONTENT_TYPES,
   MAX_UPLOAD_BYTES,
@@ -38,7 +39,8 @@ interface Body extends Slide {
  */
 export const main = handler(async (event) => {
   const body = parseJsonBody<Body>(event);
-  if (body.slides) return createCarousel(body.slides);
+  const userId = callerId(event);
+  if (body.slides) return createCarousel(body.slides, userId);
 
   const contentType = body.contentType?.toLowerCase();
   if (!contentType) throw badRequest('contentType is required');
@@ -54,7 +56,6 @@ export const main = handler(async (event) => {
 
   const record: MediaRecord = {
     id,
-    entity: MEDIA_ENTITY,
     source: 'upload',
     type: spec.type,
     status: 'awaiting_upload',
@@ -65,6 +66,8 @@ export const main = handler(async (event) => {
     original_filename: body.filename?.slice(0, 256),
   };
   await ddb.send(new PutCommand({ TableName: TABLES.media, Item: record }));
+  // The record is the content; the save is this caller's claim on it.
+  await saveMedia(userId, record.id);
 
   // signableHeaders puts content-type in SignedHeaders, so S3 rejects a PUT
   // that sends anything else. Without it the presigner signs host alone and the
@@ -80,7 +83,7 @@ export const main = handler(async (event) => {
 
 const MAX_SLIDES = 20;
 
-async function createCarousel(slides: Slide[]) {
+async function createCarousel(slides: Slide[], userId: string) {
   if (slides.length === 0) throw badRequest('slides must not be empty');
   if (slides.length > MAX_SLIDES) throw badRequest(`a carousel may have at most ${MAX_SLIDES} slides`);
 
@@ -103,7 +106,6 @@ async function createCarousel(slides: Slide[]) {
   const id = randomUUID();
   const record: MediaRecord = {
     id,
-    entity: MEDIA_ENTITY,
     source: 'upload',
     type: 'carousel',
     status: 'awaiting_upload',
@@ -114,6 +116,8 @@ async function createCarousel(slides: Slide[]) {
     original_filename: specs[0].filename?.slice(0, 256),
   };
   await ddb.send(new PutCommand({ TableName: TABLES.media, Item: record }));
+  // The record is the content; the save is this caller's claim on it.
+  await saveMedia(userId, record.id);
 
   const uploads = await Promise.all(
     specs.map(async ({ contentType, spec }, index) => {
