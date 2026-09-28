@@ -32,6 +32,7 @@ export class Storage extends Construct {
 
   /** Constant partition key value for the media recency index. */
   /** GSI on the media table: newest-first library listing. */
+  static readonly CONNECTIONS_BY_USER = 'byUser';
   static readonly SAVES_BY_SAVED_AT = 'bySavedAt';
   static readonly SAVES_BY_MEDIA = 'byMedia';
   /** Sparse GSI: find an already-ingested reel by its permalink. */
@@ -202,12 +203,23 @@ export class Storage extends Construct {
       projectionType: dynamodb.ProjectionType.ALL,
     });
 
-    // Open WebSocket connections. TTL sweeps any that never sent $disconnect.
+    /*
+     * Open WebSocket connections. TTL sweeps any that never sent $disconnect.
+     *
+     * `user_id` is written by $connect from the authorizer's verified claim, and
+     * the index is what lets the broadcaster reach one person's sockets instead
+     * of scanning every socket in the system.
+     */
     this.connectionsTable = new dynamodb.Table(this, 'ConnectionsTable', {
       partitionKey: { name: 'connection_id', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       removalPolicy: RemovalPolicy.DESTROY,
       timeToLiveAttribute: 'expires_at',
+    });
+    this.connectionsTable.addGlobalSecondaryIndex({
+      indexName: Storage.CONNECTIONS_BY_USER,
+      partitionKey: { name: 'user_id', type: dynamodb.AttributeType.STRING },
+      projectionType: dynamodb.ProjectionType.KEYS_ONLY,
     });
   }
 }

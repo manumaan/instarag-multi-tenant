@@ -12,12 +12,20 @@ const verifier = CognitoJwtVerifier.create({
   clientId: process.env.USER_POOL_CLIENT_ID!,
 });
 
-const policy = (effect: 'Allow' | 'Deny', principalId: string, resource: string): APIGatewayAuthorizerResult => ({
+const policy = (
+  effect: 'Allow' | 'Deny',
+  principalId: string,
+  resource: string,
+): APIGatewayAuthorizerResult => ({
   principalId,
   policyDocument: {
     Version: '2012-10-17',
     Statement: [{ Action: 'execute-api:Invoke', Effect: effect, Resource: resource }],
   },
+  // Passed to $connect, which stores it against the connection. This is the
+  // only place a socket's identity is established — everything downstream
+  // trusts it because it was verified here, against the pool's public keys.
+  context: { userId: effect === 'Allow' ? principalId : '' },
 });
 
 export const main = async (event: APIGatewayRequestAuthorizerEvent): Promise<APIGatewayAuthorizerResult> => {

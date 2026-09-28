@@ -10,7 +10,7 @@ import * as logs from 'aws-cdk-lib/aws-logs';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as path from 'node:path';
 import type { Auth } from './auth';
-import type { Storage } from './storage';
+import { Storage } from './storage';
 
 export interface RealtimeProps {
   readonly storage: Storage;
@@ -88,6 +88,7 @@ export class Realtime extends Construct {
 
     const broadcastFn = makeFn('WsBroadcast', 'broadcast.ts', {
       CONNECTIONS_TABLE: storage.connectionsTable.tableName,
+      SAVES_TABLE: storage.savesTable.tableName,
       WS_MANAGEMENT_ENDPOINT: `https://${this.webSocketApi.apiId}.execute-api.${Stack.of(this).region}.amazonaws.com/${this.stage.stageName}`,
     });
     broadcastFn.addEventSource(
@@ -98,10 +99,26 @@ export class Realtime extends Construct {
         retryAttempts: 3,
       }),
     );
+    /*
+     * Query rather than Scan, and only on the by-user index: the broadcaster's
+     * job is now to reach one person's sockets, so it has no business being able
+     * to enumerate everyone's. Removing Scan makes the leak it used to have
+     * unrepresentable rather than merely unwritten.
+     */
     broadcastFn.addToRolePolicy(
       new iam.PolicyStatement({
-        actions: ['dynamodb:Scan', 'dynamodb:DeleteItem'],
-        resources: [storage.connectionsTable.tableArn],
+        actions: ['dynamodb:Query', 'dynamodb:DeleteItem'],
+        resources: [
+          storage.connectionsTable.tableArn,
+          `${storage.connectionsTable.tableArn}/index/${Storage.CONNECTIONS_BY_USER}`,
+        ],
+      }),
+    );
+    // Who holds a piece of content, which is who may hear that it changed.
+    broadcastFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['dynamodb:Query'],
+        resources: [`${storage.savesTable.tableArn}/index/${Storage.SAVES_BY_MEDIA}`],
       }),
     );
     this.webSocketApi.grantManageConnections(broadcastFn);

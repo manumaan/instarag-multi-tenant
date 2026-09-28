@@ -119,13 +119,19 @@ one of them is any of the caller's business.
 - **Changed:** `lens/{user_id}/{uuid}` for Lens query screenshots, which are per-person and
   transient. The one-day lifecycle rule carries over.
 
-## Realtime
+## Realtime *(implemented)*
 
-The MVP broadcaster `Scan`s every open connection and pushes every media change to all of
-them. Multi-tenant makes that a leak.
+The MVP broadcaster `Scan`ned every open connection and pushed every media change to all of
+them — one person's reel arriving in someone else's browser with its caption and analysis
+attached.
 
-Replace with: media change → `saves.byMedia` for the users who hold it → their connections
-via the `user_id` GSI. A user hears about content only when they have saved it.
+Now: media change → `saves.byMedia` for the users who hold it → their sockets via
+`connections.byUser`. A socket's identity is established once, at `$connect`, from the
+authorizer's verified claim; a connection with no identity is refused rather than stored,
+because an unattributed socket cannot be filtered later and filtering is the whole job.
+
+`dynamodb:Scan` was also removed from the broadcaster's policy. The old behaviour is now
+unrepresentable rather than merely unwritten, and a test asserts the grant stays gone.
 
 ## What carries over untouched
 

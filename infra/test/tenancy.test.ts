@@ -64,3 +64,30 @@ test('the plan worker is given its caller rather than inferring one', () => {
   assert.match(worker, /buildPlan\(request, \{ userId, mediaId \}\)/);
   assert.match(ask, /JSON\.stringify\(\{ threadId, createdAt: assistantAt, request, mediaId: body\.mediaId, userId \}\)/);
 });
+
+test('the broadcaster reaches only the people who hold the content', () => {
+  const broadcast = read('lambda/realtime/broadcast.ts');
+  const connect = read('lambda/realtime/connect.ts');
+  const authorizer = read('lambda/realtime/authorizer.ts');
+
+  // The leak this replaces: it scanned every open socket and pushed every
+  // change to all of them, caption and analysis included.
+  assert.ok(!broadcast.includes('ScanCommand'), 'the broadcaster must not enumerate all sockets');
+  assert.match(broadcast, /saversOf\(String\(media\.id\)\)/, 'recipients come from who saved it');
+  assert.match(broadcast, /IndexName: CONNECTIONS_BY_USER/, 'sockets are looked up per user');
+
+  // A socket with no verified identity cannot be filtered later, so it is
+  // refused at $connect rather than stored and hoped about.
+  assert.match(authorizer, /context: \{ userId:/);
+  assert.match(connect, /if \(!userId\) return \{ statusCode: 401/);
+  assert.match(connect, /user_id: userId/);
+});
+
+test('the broadcaster cannot scan sockets even if its code tried', () => {
+  const realtime = read('lib/realtime.ts');
+  // Capability, not just code: with Scan removed from the policy, the old
+  // behaviour is unrepresentable rather than merely unwritten.
+  const policy = realtime.slice(realtime.indexOf('broadcastFn.addToRolePolicy'));
+  assert.ok(!/'dynamodb:Scan'/.test(policy.slice(0, 600)), 'Scan must not be granted');
+  assert.match(policy, /dynamodb:Query/);
+});
