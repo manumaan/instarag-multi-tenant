@@ -178,3 +178,73 @@ test('the admin handlers get named Cognito actions on one pool', () => {
   assert.match(api, /actions: \['cognito-idp:AdminGetUser', 'cognito-idp:AdminDeleteUser'\]/);
   assert.ok(!/resources: \['\*'\][\s\S]{0,80}cognito/.test(api), 'never a wildcard resource');
 });
+
+test('an Instagram token belongs to one account, by its key', () => {
+  const store = read('lambda/connect/store.ts');
+
+  // The user is the partition key, not a field on a row keyed by something
+  // else. That is what makes a cross-account read impossible rather than
+  // merely checked: there is no shared row to read.
+  assert.match(store, /Key: \{ user_id: userId, kind: CONNECTION_KIND \}/);
+  assert.ok(
+    !/CONNECTION_ID|id: 'instagram'/.test(store),
+    'no constant id may key the connection row',
+  );
+  assert.match(
+    read('lib/connected.ts'),
+    /partitionKey: \{ name: 'user_id'[\s\S]{0,120}sortKey: \{ name: 'kind'/,
+    'the table itself must be keyed by user',
+  );
+});
+
+test('an OAuth state cannot be consumed by anyone but the caller who began it', () => {
+  const store = read('lambda/connect/store.ts');
+  // Both halves of the lookup sit inside the starting user's partition, so a
+  // state handed to another account simply is not there.
+  assert.match(store, /putState\(userId: string, state: string\)/);
+  assert.match(store, /consumeState\(userId: string, state: string\)/);
+  assert.match(store, /const key = \{ user_id: userId, kind: stateKind\(state\) \}/);
+
+  const handlers = read('lambda/connect/handlers.ts');
+  assert.match(handlers, /consumeState\(userId, state\)/);
+  // Every connect handler resolves a caller, including the three that used to
+  // take no event at all because there was only ever one account.
+  for (const name of ['start', 'exchange', 'status', 'disconnect', 'sync']) {
+    assert.match(
+      handlers,
+      new RegExp(`export const ${name} = handler\\(async \\(event\\) => \\{\\n  const userId = callerId\\(event\\);`),
+      `${name} must take its caller from the token`,
+    );
+  }
+});
+
+test('the scheduled refresh renews every account, and one failure does not stop it', () => {
+  const refresh = read('lambda/connect/refresh.ts');
+  // It has no caller of its own, so it is the one place that reads across
+  // users — and it must reach all of them, or a token lapses unnoticed.
+  assert.match(refresh, /allConnections\(\)/);
+  assert.ok(!/readConnection/.test(refresh), 'the sweep must not read a single connection');
+  assert.match(refresh, /catch \(err\)/, 'a token Meta refuses must not end the sweep');
+  assert.match(refresh, /user_id: connection\.user_id/);
+});
+
+test('a synced post the library already holds is saved, not downloaded again', () => {
+  const handlers = read('lambda/connect/handlers.ts');
+  // Content is global: the shortcode is the id for a pasted link and for a
+  // sync alike, so ingesting again would mean two rows, two downloads and two
+  // of everything downstream.
+  assert.match(handlers, /parseInstagramUrl\(item\.permalink\)\?\.shortcode/);
+  assert.match(handlers, /if \(held\.Item\)/);
+  assert.match(handlers, /if \(!mine\) await saveMedia\(userId, shortcode\)/);
+  assert.match(handlers, /const id = shortcode \?\? randomUUID\(\)/);
+});
+
+test('sync may write its own saves and usage', () => {
+  const connected = read('lib/connected.ts');
+  // It creates saves and is charged for what it fetches; without these the
+  // sync fails on its first save with AccessDenied, after the download.
+  assert.match(connected, /actions: \['dynamodb:PutItem', 'dynamodb:GetItem', 'dynamodb:Query'\][\s\S]{0,80}savesTable/);
+  assert.match(connected, /actions: \['dynamodb:UpdateItem'\][\s\S]{0,80}usageTable/);
+  // The media table lost its indexes when the shortcode became its key.
+  assert.ok(!/mediaTable\.tableArn\}\/index/.test(connected), 'the media table has no indexes');
+});

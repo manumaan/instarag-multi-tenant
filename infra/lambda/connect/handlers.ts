@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { SFNClient, StartExecutionCommand } from '@aws-sdk/client-sfn';
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import { BatchGetCommand, BatchWriteCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
+import { BatchGetCommand, BatchWriteCommand, GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { ddb, TABLES } from '../shared/ddb';
-import { slideTsMs } from '../shared/media';
+import { parseInstagramUrl, slideTsMs } from '../shared/media';
 import { badRequest, callerId, handler, parseJsonBody } from '../shared/http';
-import { saveMedia, savedMediaIds } from '../shared/saves';
+import { hasSaved, saveMedia, savedMediaIds } from '../shared/saves';
 import type { MediaRecord } from '../shared/media';
 import {
   buildAuthorizeUrl,
@@ -18,7 +18,15 @@ import {
   DEFAULT_SCOPES,
   type IgMedia,
 } from './instagram';
-import { clearConnection, consumeState, loadAppSecret, putState, readConnection, writeConnection } from './store';
+import {
+  CONNECTION_KIND,
+  clearConnection,
+  consumeState,
+  loadAppSecret,
+  putState,
+  readConnection,
+  writeConnection,
+} from './store';
 
 const s3 = new S3Client({});
 const sfn = new SFNClient({});
@@ -30,12 +38,13 @@ const STATE_MACHINE_ARN = process.env.STATE_MACHINE_ARN;
 const JOB_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 /** POST /connect/instagram/start — the URL to send the browser to. */
-export const start = handler(async () => {
+export const start = handler(async (event) => {
+  const userId = callerId(event);
   if (!APP_ID) throw badRequest('no Instagram app id is configured');
   if (!(await loadAppSecret())) throw badRequest('no Instagram app secret has been set');
 
   const state = randomUUID();
-  await putState(state);
+  await putState(userId, state);
   return {
     authorizeUrl: buildAuthorizeUrl({ appId: APP_ID, redirectUri: REDIRECT_URI, state, scopes: DEFAULT_SCOPES }),
     redirectUri: REDIRECT_URI,
@@ -49,10 +58,11 @@ export const start = handler(async () => {
  * app's own auth, so the code and both tokens only ever move server side.
  */
 export const exchange = handler(async (event) => {
+  const userId = callerId(event);
   const { code, state } = parseJsonBody<{ code?: string; state?: string }>(event);
   if (!code) throw badRequest('code is required');
   if (!state) throw badRequest('state is required');
-  if (!(await consumeState(state))) throw badRequest('unrecognised or expired state; start the connection again');
+  if (!(await consumeState(userId, state))) throw badRequest('unrecognised or expired state; start the connection again');
 
   const appSecret = await loadAppSecret();
   if (!appSecret) throw badRequest('no Instagram app secret has been set');
@@ -71,7 +81,8 @@ export const exchange = handler(async (event) => {
 
   const now = new Date();
   await writeConnection({
-    id: 'instagram',
+    user_id: userId,
+    kind: CONNECTION_KIND,
     ig_user_id: String(profile.id ?? shortLived.user_id ?? ''),
     username: profile.username,
     access_token: longLived.access_token,
@@ -84,8 +95,9 @@ export const exchange = handler(async (event) => {
 });
 
 /** GET /connect/instagram — whether a connection exists, and how healthy it is. */
-export const status = handler(async () => {
-  const connection = await readConnection();
+export const status = handler(async (event) => {
+  const userId = callerId(event);
+  const connection = await readConnection(userId);
   if (!connection) {
     return { connected: false, configured: Boolean(APP_ID) && Boolean(await loadAppSecret()) };
   }
@@ -103,8 +115,9 @@ export const status = handler(async () => {
 });
 
 /** DELETE /connect/instagram — forget the token. */
-export const disconnect = handler(async () => {
-  await clearConnection();
+export const disconnect = handler(async (event) => {
+  const userId = callerId(event);
+  await clearConnection(userId);
   return { connected: false };
 });
 
@@ -118,7 +131,7 @@ export const disconnect = handler(async () => {
 export const sync = handler(async (event) => {
   const userId = callerId(event);
   const { limit } = parseJsonBody<{ limit?: number }>(event);
-  const connection = await readConnection();
+  const connection = await readConnection(userId);
   if (!connection) throw badRequest('Instagram is not connected');
 
   const media = await listMedia(connection.access_token, limit ?? 25);
@@ -130,6 +143,33 @@ export const sync = handler(async (event) => {
     if (existing.has(item.id)) {
       results.push({ ig_media_id: item.id, status: 'already ingested' });
       continue;
+    }
+    /*
+     * The shortcode is the media id, exactly as it is for a pasted link, so a
+     * post this account already has from either route is one row. Content is
+     * global now, and somebody else having ingested the same post is not a
+     * reason to skip it — it is a reason to save the row they created. Ingesting
+     * again would download it twice and leave two of everything downstream.
+     */
+    const shortcode = item.permalink ? parseInstagramUrl(item.permalink)?.shortcode : undefined;
+    if (shortcode) {
+      const held = await ddb.send(
+        new GetCommand({
+          TableName: TABLES.media,
+          Key: { id: shortcode },
+          ProjectionExpression: 'id',
+        }),
+      );
+      if (held.Item) {
+        const mine = await hasSaved(userId, shortcode);
+        if (!mine) await saveMedia(userId, shortcode);
+        results.push({
+          ig_media_id: item.id,
+          status: mine ? 'already ingested' : 'saved, already held',
+          mediaId: shortcode,
+        });
+        continue;
+      }
     }
     if (!isIngestable(item)) {
       results.push({
@@ -145,7 +185,10 @@ export const sync = handler(async (event) => {
       });
       continue;
     }
-    const mediaId = item.media_type === 'CAROUSEL_ALBUM' ? await ingestCarousel(item, userId) : await ingest(item, userId);
+    const mediaId =
+      item.media_type === 'CAROUSEL_ALBUM'
+        ? await ingestCarousel(item, userId, shortcode)
+        : await ingest(item, userId, shortcode);
     results.push({ ig_media_id: item.id, status: 'ingesting', mediaId });
   }
 
@@ -160,9 +203,9 @@ export const sync = handler(async (event) => {
  * the question is "does this person already have it", and with content shared
  * the two are no longer the same question.
  *
- * TODO(multi-tenant): connected mode is not yet per-user — the token table still
- * has to be re-keyed to user_id, which is its own step. This reads saves so the
- * shape is right now and only the key changes then.
+ * This is the fallback for a post whose permalink will not parse: those keep a
+ * uuid rather than a shortcode, so their `ig_media_id` is the only thing that
+ * recognises them on a later sync.
  */
 async function existingIgMediaIds(userId: string): Promise<Set<string>> {
   const saved = await savedMediaIds(userId);
@@ -184,8 +227,8 @@ async function existingIgMediaIds(userId: string): Promise<Set<string>> {
   );
 }
 
-async function ingest(item: IgMedia, userId: string): Promise<string> {
-  const id = randomUUID();
+async function ingest(item: IgMedia, userId: string, shortcode?: string): Promise<string> {
+  const id = shortcode ?? randomUUID();
   const s3Key = `media/${id}/original.mp4`;
 
   const response = await fetch(item.media_url!);
@@ -240,9 +283,9 @@ const FRAMES_TABLE = process.env.FRAMES_TABLE!;
  * A carousel's slides are downloaded straight in as frames, and the pipeline
  * joins at the vision pass: there is no video to extract from.
  */
-async function ingestCarousel(item: IgMedia, userId: string): Promise<string> {
+async function ingestCarousel(item: IgMedia, userId: string, shortcode?: string): Promise<string> {
   const slides = carouselSlides(item);
-  const id = randomUUID();
+  const id = shortcode ?? randomUUID();
   const now = new Date().toISOString();
 
   let totalBytes = 0;

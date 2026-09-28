@@ -61,8 +61,17 @@ export class Connected extends Construct {
       removalPolicy,
     });
 
+    /*
+     * PK user_id, SK kind: one connection row per person (`kind: 'connection'`)
+     * plus their in-flight OAuth state rows (`kind: 'state#<state>'`).
+     *
+     * The user is in the key rather than in a field, which is what makes a state
+     * impossible to consume across accounts — the lookup happens inside the
+     * caller's own partition, so there is no check to forget.
+     */
     this.table = new dynamodb.Table(this, 'ConnectionTable', {
-      partitionKey: { name: 'id', type: dynamodb.AttributeType.STRING },
+      partitionKey: { name: 'user_id', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'kind', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       encryption: dynamodb.TableEncryption.CUSTOMER_MANAGED,
       encryptionKey: this.key,
@@ -131,19 +140,32 @@ export class Connected extends Construct {
       }),
     );
     this.syncFunction.addToRolePolicy(
-      new iam.PolicyStatement({ actions: ['dynamodb:PutItem'], resources: [storage.mediaTable.tableArn] }),
+      new iam.PolicyStatement({
+        // GetItem because a post the account already holds — from a pasted link
+        // or from someone else's sync — is saved rather than fetched again.
+        // BatchGetItem reads the ig_media_id of what this caller already has.
+        actions: ['dynamodb:PutItem', 'dynamodb:GetItem', 'dynamodb:BatchGetItem'],
+        resources: [storage.mediaTable.tableArn],
+      }),
+    );
+    // A sync creates saves, reads this caller's library, and is charged for it.
+    this.syncFunction.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['dynamodb:PutItem', 'dynamodb:GetItem', 'dynamodb:Query'],
+        resources: [storage.savesTable.tableArn],
+      }),
+    );
+    this.syncFunction.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['dynamodb:UpdateItem'],
+        resources: [storage.usageTable.tableArn],
+      }),
     );
     // A carousel's slides are written straight in as frames.
     this.syncFunction.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ['dynamodb:BatchWriteItem'],
         resources: [storage.framesTable.tableArn],
-      }),
-    );
-    this.syncFunction.addToRolePolicy(
-      new iam.PolicyStatement({
-        actions: ['dynamodb:Query'],
-        resources: [`${storage.mediaTable.tableArn}/index/byCreatedAt`],
       }),
     );
 

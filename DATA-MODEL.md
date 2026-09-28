@@ -83,9 +83,27 @@ Unchanged, still keyed by `media_id`. They are derived from content, so they are
 
 ### `jobs`, `connections`, the Instagram token table
 - `jobs` unchanged.
-- **Changed:** `connections` gains `user_id` and a GSI on it.
-- **Changed:** the Instagram token table becomes PK `user_id` — it is per-account by nature.
+- **Done:** `connections` gains `user_id` and a GSI on it (`byUser`), which is what lets the
+  broadcaster push to the people holding a reel instead of scanning every socket.
+- **Done:** the Instagram token table is PK `user_id`, SK `kind` — per-account by nature.
   The KMS CMK encryption carries over unchanged.
+  - `kind: 'connection'` is the token row; `kind: 'state#<state>'` is an in-flight OAuth
+    state, TTL'd, in the partition of whoever began the flow. **The user is in the key, not
+    in a field**, so a state handed to another account is not merely rejected — it is not
+    there to find, and there is no check to forget.
+  - Every connect handler now resolves a caller. Three of them (`start`, `status`,
+    `disconnect`) previously took no event at all, because there was only ever one account.
+  - The daily refresh has no caller, so it is the one place that reads across users:
+    `allConnections()` sweeps every token row (a filtered Scan — one row per connected
+    person, swept once a day) and renews each inside its window. It renews serially and
+    catches per account, because a token Meta refuses to refresh is exactly the token about
+    to lapse, and stopping there would take everyone after it down with it.
+  - Sync keys what it ingests by **shortcode**, exactly as a pasted link does, so one post
+    is one row whichever route it arrived by. A post already held — by this account or by
+    anyone — is *saved* rather than fetched again; ingesting it afresh would mean two
+    downloads and two of everything downstream. A permalink that will not parse falls back
+    to a uuid, and for those the `ig_media_id` of the caller's own saves is what recognises
+    the post on a later sync.
 
 ## The search index is a security boundary
 
