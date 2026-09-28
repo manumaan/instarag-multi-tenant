@@ -136,6 +136,7 @@ export class ReelLensStack extends Stack {
     // so it both reads their saves (to skip what they already hold) and writes
     // new ones.
     storage.savesTable.grantReadWriteData(connected.syncFunction);
+    storage.usageTable.grantWriteData(connected.syncFunction);
 
     // An uploaded carousel is the one ingest path with no ffmpeg behind it, so
     // it asks the thumbnailer directly rather than getting one on the way past.

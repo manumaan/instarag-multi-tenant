@@ -94,7 +94,7 @@ export const main = handler(async (event) => {
     messages: [{ role: 'user', content: `${formatContext(hits)}\n\nQuestion: ${question}` }],
   });
 
-  recordUsage('ask', MODEL_ID, response.usage);
+  recordUsage('ask', MODEL_ID, response.usage, userId);
 
   const parsed = response.parsed_output;
   if (!parsed) throw new Error(`model returned no parsable answer (stop_reason ${response.stop_reason})`);

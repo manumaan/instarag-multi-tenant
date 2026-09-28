@@ -53,7 +53,7 @@ Unchanged, still keyed by `media_id`. They are derived from content, so they are
 - `messages` unchanged (PK `thread_id`, SK `created_at`), reached only through a thread the
   caller owns.
 
-### `usage` — what each person has cost *(new)*
+### `usage` — what each person has cost *(implemented)*
 - PK `user_id`, SK `usage#YYYY-MM`
 - Counters updated with DynamoDB `ADD`, which is atomic and needs no read:
   `downloads`, `bytes_downloaded`, `tokens_in`, `tokens_out`, `analyses`, `plans`, `saves`.

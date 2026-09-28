@@ -81,6 +81,8 @@ export class Api extends Construct {
       MEDIA_BUCKET: storage.mediaBucket.bucketName,
       MEDIA_TABLE: storage.mediaTable.tableName,
       FRAMES_TABLE: storage.framesTable.tableName,
+      SAVES_TABLE: storage.savesTable.tableName,
+      USAGE_TABLE: storage.usageTable.tableName,
       JOBS_TABLE: storage.jobsTable.tableName,
       TRANSCRIPT_SEGMENTS_TABLE: storage.transcriptSegmentsTable.tableName,
     };
@@ -114,12 +116,14 @@ export class Api extends Construct {
       fn.addToRolePolicy(new iam.PolicyStatement({ actions, resources }));
 
     const createUpload = makeFn('CreateUpload', 'create-upload.ts');
+    allow(createUpload, ['dynamodb:UpdateItem'], [storage.usageTable.tableArn]);
     // saves: writes a save when the record is created.
     allow(createUpload, ['dynamodb:PutItem'], [storage.savesTable.tableArn]);
     allow(createUpload, ['s3:PutObject'], [mediaObjects]);
     allow(createUpload, ['dynamodb:PutItem'], [storage.mediaTable.tableArn]);
 
     const completeUpload = makeFn('CompleteUpload', 'complete-upload.ts');
+    allow(completeUpload, ['dynamodb:UpdateItem'], [storage.usageTable.tableArn]);
     allow(completeUpload, ['s3:GetObject'], [mediaObjects]); // HeadObject is authorised as GetObject
     allow(completeUpload, ['dynamodb:GetItem', 'dynamodb:UpdateItem'], [storage.mediaTable.tableArn]);
     // A carousel's completion registers its uploaded slides as frames.
@@ -129,6 +133,7 @@ export class Api extends Construct {
     this.completeUploadFunction = completeUpload;
 
     const createFromUrl = makeFn('CreateFromUrl', 'create-from-url.ts');
+    allow(createFromUrl, ['dynamodb:UpdateItem'], [storage.usageTable.tableArn]);
     // saves: writes a save, and reuses content anyone already ingested.
     allow(createFromUrl, ['dynamodb:PutItem'], [storage.savesTable.tableArn]);
     allow(createFromUrl, ['dynamodb:PutItem'], [storage.mediaTable.tableArn]);
@@ -165,6 +170,7 @@ export class Api extends Construct {
     // Longer than the rest: it also clears the vector index, and the first
     // call after the collection has scaled to zero waits for it to warm up.
     const deleteMedia = makeFn('DeleteMedia', 'delete-media.ts', { timeout: Duration.seconds(60) });
+    allow(deleteMedia, ['dynamodb:UpdateItem'], [storage.usageTable.tableArn]);
     // saves: unsave, then ask who is left.
     allow(deleteMedia, ['dynamodb:GetItem', 'dynamodb:DeleteItem', 'dynamodb:Query'], [storage.savesTable.tableArn, `${storage.savesTable.tableArn}/index/*`]);
     allow(deleteMedia, ['dynamodb:GetItem', 'dynamodb:DeleteItem'], [storage.mediaTable.tableArn]);
@@ -193,6 +199,7 @@ export class Api extends Construct {
       THREADS_TABLE: storage.threadsTable.tableName,
       MESSAGES_TABLE: storage.messagesTable.tableName,
       SAVES_TABLE: storage.savesTable.tableName,
+      USAGE_TABLE: storage.usageTable.tableName,
       SEARCH_ENDPOINT: props.search.endpoint,
       SEARCH_INDEX: 'frames',
       ANSWER_MODEL_ID: props.answerModel,
@@ -228,6 +235,7 @@ export class Api extends Construct {
      * the answer lands on the thread's assistant message.
      */
     const planWorker = makeSearchFn('PlanWorker', 'plan-worker.ts', 'handler');
+    allow(planWorker, ['dynamodb:UpdateItem'], [storage.usageTable.tableArn]);
     planWorker.addEnvironment('EXPANSION_MODEL_ID', props.expansionModel);
     props.claudeKey.grantRead(planWorker);
     allow(planWorker, ['dynamodb:Query'], [storage.savesTable.tableArn]);
@@ -238,6 +246,7 @@ export class Api extends Construct {
     props.search.grantRead(planWorker);
 
     const ask = makeSearchFn('Ask', 'ask.ts');
+    allow(ask, ['dynamodb:UpdateItem'], [storage.usageTable.tableArn]);
     ask.addEnvironment('EXPANSION_MODEL_ID', props.expansionModel);
     props.claudeKey.grantRead(ask);
     // The boundary: Ask can only match what this table says the caller holds.
@@ -279,6 +288,7 @@ export class Api extends Construct {
     props.search.grantRead(lensSimilar);
 
     const lensWeb = makeSearchFn('LensWeb', 'web-lens.ts');
+    allow(lensWeb, ['dynamodb:UpdateItem'], [storage.usageTable.tableArn]);
     lensWeb.addEnvironment('SEARCH_SECRET_ARN', this.webSearchSecret.secretArn);
     this.webSearchSecret.grantRead(lensWeb);
     props.claudeKey.grantRead(lensWeb);
@@ -299,6 +309,7 @@ export class Api extends Construct {
     // Retrying is a real re-run: it clears whatever a half-finished pipeline
     // left behind, so it needs the same reach as delete plus the pipeline.
     const retryMedia = makeFn('RetryMedia', 'retry-media.ts', { timeout: Duration.seconds(60) });
+    allow(retryMedia, ['dynamodb:UpdateItem'], [storage.usageTable.tableArn]);
     // saves: you can only retry what you hold.
     allow(retryMedia, ['dynamodb:GetItem'], [storage.savesTable.tableArn]);
     this.retryMediaFunction = retryMedia;

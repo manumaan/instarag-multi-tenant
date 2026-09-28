@@ -91,3 +91,48 @@ test('the broadcaster cannot scan sockets even if its code tried', () => {
   assert.ok(!/'dynamodb:Scan'/.test(policy.slice(0, 600)), 'Scan must not be granted');
   assert.match(policy, /dynamodb:Query/);
 });
+
+test('the two ledger writers agree on the row key', () => {
+  // infra/extract is built from its own directory and cannot import shared, so
+  // the period format exists twice. A mismatch would split one person's month
+  // across two rows and make every total quietly wrong.
+  const shared = require('../lambda/shared/ledger') as { usagePeriod: (at?: Date) => string };
+  const extract = require('../extract/src/ledger') as { usagePeriod: (at?: Date) => string };
+  const at = new Date('2026-09-28T11:22:33Z');
+  assert.equal(shared.usagePeriod(at), extract.usagePeriod(at));
+  assert.equal(shared.usagePeriod(at), 'usage#2026-09');
+});
+
+test('usage is charged to whoever caused the work, not to everyone holding it', () => {
+  const ledger = read('lambda/shared/ledger.ts');
+  const download = read('extract/src/download.ts');
+  const saves = read('lambda/shared/saves.ts');
+
+  // The asymmetry is the point: one download and one vision pass can serve many
+  // libraries, and the person who pasted the link wears it. Everyone after them
+  // records a save and nothing else, which is deduplication showing up in the
+  // accounts rather than only in the infrastructure.
+  assert.match(saves, /addUsage\(userId, \{ saves: 1 \}\)/);
+  assert.match(download, /addDownloadUsage\(userId, \{ downloads: 1, bytes_downloaded: size \}\)/);
+  // A refused attempt still spent a request against the rate limit.
+  assert.match(download, /addDownloadUsage\(userId, \{ downloads: 1 \}\)/);
+
+  // Counters only, incremented atomically — never read-modify-write, because
+  // two handlers incrementing at once is the normal case.
+  assert.match(ledger, /UpdateExpression: `ADD \$\{adds\.join\(', '\)\}`/);
+  assert.ok(!ledger.includes('GetCommand'), 'the ledger must not read before writing');
+});
+
+test('a pipeline run knows who caused it', () => {
+  const pipeline = read('lib/pipeline.ts');
+  // Passed to every worker, so the download and the vision pass can charge the
+  // right account. Absent, JsonPath fails the execution — which is why each
+  // ingest path sets it.
+  assert.ok(
+    (pipeline.match(/userId: sfn\.JsonPath\.stringAt\('\$\.userId'\)/g) ?? []).length >= 4,
+    'every worker step must receive the causing user',
+  );
+  for (const file of ['lambda/media/create-from-url.ts', 'lambda/media/retry-media.ts']) {
+    assert.match(read(file), /input: JSON\.stringify\(\{\s*\n\s*userId,/, `${file} must set it`);
+  }
+});

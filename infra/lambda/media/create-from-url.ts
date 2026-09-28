@@ -83,6 +83,7 @@ export const main = handler(async (event) => {
         stateMachineArn: STATE_MACHINE_ARN,
         name: `${mediaId}-${Date.now()}`,
         input: JSON.stringify({
+          userId,
           mediaId,
           source: record.source,
           jobExpiresAt: String(Math.floor(Date.now() / 1000) + JOB_TTL_SECONDS),

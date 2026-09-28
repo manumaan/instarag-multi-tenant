@@ -4,6 +4,8 @@ export interface Usage {
   output_tokens: number;
 }
 
+import { addUsage } from './ledger';
+
 export const USAGE_NAMESPACE = 'ReelLens';
 
 /**
@@ -25,7 +27,7 @@ export const USAGE_NAMESPACE = 'ReelLens';
  * nothing, they are queryable in Logs Insights when a spike needs explaining,
  * and the alarm only ever needed the total.
  */
-export function recordUsage(operation: string, model: string, usage: Usage): void {
+export function recordUsage(operation: string, model: string, usage: Usage, userId?: string): void {
   const emf = {
     _aws: {
       Timestamp: Date.now(),
@@ -46,4 +48,19 @@ export function recordUsage(operation: string, model: string, usage: Usage): voi
     model,
   };
   console.log(JSON.stringify(emf));
+
+  /*
+   * The metric is the alarm; the ledger is the per-person record. Both, because
+   * they answer different questions: one says "is something looping right now",
+   * the other "what has this account cost", and neither substitutes.
+   *
+   * Not awaited: a token count must never be what delays an answer. A lost
+   * write is a slightly low counter, which the metric still catches.
+   */
+  void addUsage(userId, {
+    tokens_in: usage.input_tokens,
+    tokens_out: usage.output_tokens,
+    ...(operation === 'analyse' ? { analyses: 1 } : {}),
+    ...(operation === 'plan' ? { plans: 1 } : {}),
+  });
 }

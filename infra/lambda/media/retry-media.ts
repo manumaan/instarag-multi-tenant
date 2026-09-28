@@ -23,7 +23,8 @@ export const main = handler(async (event) => {
 
   // Same reasoning as get-media: not-found rather than forbidden, so a caller
   // cannot probe for reels outside their library.
-  if (!(await hasSaved(callerId(event), id))) throw notFound('media not found');
+  const userId = callerId(event);
+  if (!(await hasSaved(userId, id))) throw notFound('media not found');
 
   const result = await ddb.send(new GetCommand({ TableName: TABLES.media, Key: { id } }));
   const media = result.Item as MediaRecord | undefined;
@@ -72,6 +73,7 @@ export const main = handler(async (event) => {
       stateMachineArn: STATE_MACHINE_ARN,
       name: `${id}-retry-${Date.now()}`,
       input: JSON.stringify({
+        userId,
         mediaId: id,
         source: media.source,
         // Without this a retried carousel is routed down the reel path and

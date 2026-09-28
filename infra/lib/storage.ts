@@ -23,6 +23,7 @@ export class Storage extends Construct {
   readonly mediaTable: dynamodb.Table;
   readonly framesTable: dynamodb.Table;
   readonly savesTable: dynamodb.Table;
+  readonly usageTable: dynamodb.Table;
   readonly jobsTable: dynamodb.Table;
   readonly connectionsTable: dynamodb.Table;
   readonly captionFactsTable: dynamodb.Table;
@@ -189,6 +190,21 @@ export class Storage extends Construct {
       indexName: Storage.SAVES_BY_MEDIA,
       partitionKey: { name: 'media_id', type: dynamodb.AttributeType.STRING },
       projectionType: dynamodb.ProjectionType.KEYS_ONLY,
+    });
+
+    /*
+     * What each person has cost, per calendar month. Counters only, incremented
+     * with ADD, so two handlers writing at once is normal rather than a
+     * conflict.
+     *
+     * Durable like the rest: it is the basis of a quota and of any bill, and it
+     * cannot be reconstructed after the fact — the CloudWatch metrics beside it
+     * are aggregates with a retention window, not a per-person record.
+     */
+    this.usageTable = new dynamodb.Table(this, 'UsageTable', {
+      partitionKey: { name: 'user_id', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'period', type: dynamodb.AttributeType.STRING },
+      ...durable,
     });
 
     this.jobsTable = new dynamodb.Table(this, 'JobsTable', {

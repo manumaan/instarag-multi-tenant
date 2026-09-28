@@ -3,7 +3,7 @@ import { SFNClient, StartExecutionCommand } from '@aws-sdk/client-sfn';
 import { InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
 import { BatchWriteCommand, GetCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { ddb, TABLES } from '../shared/ddb';
-import { badRequest, handler, notFound, pathParam } from '../shared/http';
+import { badRequest, handler, notFound, pathParam, callerId } from '../shared/http';
 import type { MediaRecord } from '../shared/media';
 
 const s3 = new S3Client({});
@@ -22,6 +22,7 @@ const JOB_TTL_SECONDS = 30 * 24 * 60 * 60;
  * Verifies the object really landed, then moves the item to `queued`.
  */
 export const main = handler(async (event) => {
+  const userId = callerId(event);
   const id = pathParam(event, 'id');
 
   const existing = await ddb.send(new GetCommand({ TableName: TABLES.media, Key: { id } }));
@@ -34,7 +35,7 @@ export const main = handler(async (event) => {
 
   // A carousel has no single original: its slides are already the frames, so
   // completion registers them rather than checking one object.
-  if (media.type === 'carousel') return completeCarousel(id, media);
+  if (media.type === 'carousel') return completeCarousel(id, media, userId);
 
   let head;
   try {
@@ -69,6 +70,7 @@ export const main = handler(async (event) => {
         // Execution names must be unique; a retried completion starts a fresh run.
         name: `${id}-${Date.now()}`,
         input: JSON.stringify({
+          userId,
           mediaId: id,
           source: media.source,
           // A string, because the state machine writes it as a DynamoDB 'N'.
@@ -86,7 +88,7 @@ export const main = handler(async (event) => {
  * past extraction: there is no video to extract from, the images *are* the
  * frames.
  */
-async function completeCarousel(id: string, media: MediaRecord) {
+async function completeCarousel(id: string, media: MediaRecord, userId: string) {
   const listed = await s3.send(
     new ListObjectsV2Command({ Bucket: BUCKET, Prefix: `media/${id}/frames/` }),
   );
@@ -159,6 +161,7 @@ async function completeCarousel(id: string, media: MediaRecord) {
         stateMachineArn: STATE_MACHINE_ARN,
         name: `${id}-${Date.now()}`,
         input: JSON.stringify({
+          userId,
           mediaId: id,
           source: media.source,
           // Skips download, extraction and transcription: slides are frames

@@ -18,6 +18,8 @@ const TRANSCRIPT_SEGMENTS_TABLE = process.env.TRANSCRIPT_SEGMENTS_TABLE!;
 const EMBED_CONCURRENCY = Number(process.env.EMBED_CONCURRENCY ?? 8);
 
 export interface IndexEvent {
+  /** Whoever caused this run, carried from the execution input. */
+  userId?: string;
   mediaId: string;
 }
 

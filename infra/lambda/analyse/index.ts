@@ -24,6 +24,8 @@ const MAX_TOKENS = Number(process.env.ANALYSIS_MAX_TOKENS ?? 16000);
 
 
 export interface AnalyseEvent {
+  /** Whoever caused this run, carried from the execution input. */
+  userId?: string;
   mediaId: string;
 }
 
@@ -96,7 +98,7 @@ export async function handler(event: AnalyseEvent): Promise<AnalyseResult> {
   if (response.stop_reason === 'refusal') {
     throw new Error('the model declined to analyse this reel');
   }
-  recordUsage('analyse', MODEL_ID, response.usage);
+  recordUsage('analyse', MODEL_ID, response.usage, event.userId);
 
   const analysis = response.parsed_output as Analysis | null;
   if (!analysis) throw new Error(`model returned no parsable analysis (stop_reason ${response.stop_reason})`);

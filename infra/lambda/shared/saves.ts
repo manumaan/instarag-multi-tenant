@@ -1,5 +1,6 @@
 import { DeleteCommand, GetCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { ddb } from './ddb';
+import { addUsage } from './ledger';
 
 const SAVES_TABLE = process.env.SAVES_TABLE!;
 
@@ -29,10 +30,13 @@ export async function saveMedia(userId: string, mediaId: string): Promise<void> 
       // user first took it, and re-pasting a link should not reorder it.
       ConditionExpression: 'attribute_not_exists(user_id)',
     }),
-  ).catch((err) => {
-    if ((err as { name?: string }).name === 'ConditionalCheckFailedException') return;
-    throw err;
-  });
+  )
+    .then(() => addUsage(userId, { saves: 1 }))
+    .catch((err) => {
+      // Already saved: keep the first timestamp and do not count it twice.
+      if ((err as { name?: string }).name === 'ConditionalCheckFailedException') return;
+      throw err;
+    });
 }
 
 export async function unsaveMedia(userId: string, mediaId: string): Promise<void> {

@@ -87,6 +87,7 @@ export class Connected extends Construct {
       MEDIA_BUCKET: storage.mediaBucket.bucketName,
       MEDIA_TABLE: storage.mediaTable.tableName,
       SAVES_TABLE: storage.savesTable.tableName,
+      USAGE_TABLE: storage.usageTable.tableName,
       FRAMES_TABLE: storage.framesTable.tableName,
       JOBS_TABLE: storage.jobsTable.tableName,
     };

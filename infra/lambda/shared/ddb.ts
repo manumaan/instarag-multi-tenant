@@ -9,6 +9,7 @@ export const TABLES = {
   media: process.env.MEDIA_TABLE!,
   frames: process.env.FRAMES_TABLE!,
   saves: process.env.SAVES_TABLE!,
+  usage: process.env.USAGE_TABLE!,
   jobs: process.env.JOBS_TABLE!,
 };
 

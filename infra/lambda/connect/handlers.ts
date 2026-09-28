@@ -222,6 +222,7 @@ async function ingest(item: IgMedia, userId: string): Promise<string> {
         stateMachineArn: STATE_MACHINE_ARN,
         name: `${id}-${Date.now()}`,
         input: JSON.stringify({
+          userId,
           mediaId: id,
           // Not 'url': the bytes are already in S3, so the download leg is skipped.
           source: 'api',
@@ -296,6 +297,7 @@ async function ingestCarousel(item: IgMedia, userId: string): Promise<string> {
         stateMachineArn: STATE_MACHINE_ARN,
         name: `${id}-${Date.now()}`,
         input: JSON.stringify({
+          userId,
           mediaId: id,
           source: 'api',
           kind: 'carousel',

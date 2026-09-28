@@ -10,6 +10,7 @@ import { convertSlide, readFrame, run } from './ffmpeg';
 import { mapWithConcurrency } from './concurrency';
 import { writeThumbnail } from './thumbnail';
 import { recordDownload } from './metrics';
+import { addDownloadUsage } from './ledger';
 import {
   classifyPost,
   explainDownloadFailure,
@@ -50,6 +51,8 @@ const SLIDE_CONCURRENCY = Number(process.env.SLIDE_CONCURRENCY ?? 4);
 
 export interface DownloadEvent {
   mediaId: string;
+  /** Whoever caused this fetch, carried from the execution input. */
+  userId?: string;
 }
 
 export interface DownloadResult {
@@ -76,7 +79,7 @@ export interface DownloadResult {
  * Public posts only: no credentials, no cookies, no logged-in session.
  */
 export async function handler(event: DownloadEvent): Promise<DownloadResult> {
-  const { mediaId } = event;
+  const { mediaId, userId } = event;
   if (!mediaId) throw new Error('mediaId is required');
 
   const record = await ddb.send(new GetCommand({ TableName: MEDIA_TABLE, Key: { id: mediaId } }));
@@ -99,7 +102,7 @@ export async function handler(event: DownloadEvent): Promise<DownloadResult> {
       throw error;
     }
     if (shape.kind === 'slides') {
-      return await storeSlides(mediaId, info, shape.slides, shape.videoSlidesSkipped, workDir);
+      return await storeSlides(mediaId, info, shape.slides, shape.videoSlidesSkipped, workDir, userId);
     }
 
     const declared = info.filesize ?? info.filesize_approx;
@@ -159,11 +162,15 @@ export async function handler(event: DownloadEvent): Promise<DownloadResult> {
       uploader: fields.uploader,
     });
     recordDownload('ok', { mediaId, bytes: size, kind: 'reel' });
+    await addDownloadUsage(userId, { downloads: 1, bytes_downloaded: size });
     return { mediaId, kind: 'reel', s3Key, bytes: size, hasCaption: Boolean(fields.caption_raw) };
   } catch (err) {
     recordDownload((err as Error).name === 'InstagramRateLimited' ? 'rate_limited' : 'failed', {
       mediaId,
     });
+    // A refused attempt still spent a request against the anonymous limit, so
+    // it counts — bytes did not move, so those do not.
+    await addDownloadUsage(userId, { downloads: 1 });
     throw err;
   } finally {
     await rm(workDir, { recursive: true, force: true });
@@ -186,6 +193,7 @@ async function storeSlides(
   slides: PostSlide[],
   videoSlidesSkipped: number,
   workDir: string,
+  userId?: string,
 ): Promise<DownloadResult> {
   const wanted = slides.slice(0, MAX_SLIDES);
   if (wanted.length < slides.length) {
@@ -283,6 +291,7 @@ async function storeSlides(
     hasCaption: Boolean(fields.caption_raw),
   });
   recordDownload('ok', { mediaId, bytes, kind: 'carousel' });
+  await addDownloadUsage(userId, { downloads: 1, bytes_downloaded: bytes });
   return {
     mediaId,
     kind: 'carousel',

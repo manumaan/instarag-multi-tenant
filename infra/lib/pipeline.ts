@@ -72,6 +72,8 @@ export class Pipeline extends Construct {
       environment: {
         MEDIA_BUCKET: storage.mediaBucket.bucketName,
         MEDIA_TABLE: storage.mediaTable.tableName,
+        USAGE_TABLE: storage.usageTable.tableName,
+        SAVES_TABLE: storage.savesTable.tableName,
         FRAMES_TABLE: storage.framesTable.tableName,
         MAX_FRAMES: String(props.maxFrames),
       },
@@ -110,6 +112,8 @@ export class Pipeline extends Construct {
       environment: {
         MEDIA_BUCKET: storage.mediaBucket.bucketName,
         MEDIA_TABLE: storage.mediaTable.tableName,
+        USAGE_TABLE: storage.usageTable.tableName,
+        SAVES_TABLE: storage.savesTable.tableName,
         FRAMES_TABLE: storage.framesTable.tableName,
       },
       logGroup: new logs.LogGroup(this, 'DownloadReelLogs', { retention: logs.RetentionDays.TWO_WEEKS }),
@@ -152,6 +156,8 @@ export class Pipeline extends Construct {
       environment: {
         MEDIA_BUCKET: storage.mediaBucket.bucketName,
         MEDIA_TABLE: storage.mediaTable.tableName,
+        USAGE_TABLE: storage.usageTable.tableName,
+        SAVES_TABLE: storage.savesTable.tableName,
       },
       logGroup: new logs.LogGroup(this, 'ThumbnailLogs', { retention: logs.RetentionDays.TWO_WEEKS }),
     });
@@ -180,6 +186,8 @@ export class Pipeline extends Construct {
       environment: {
         MEDIA_BUCKET: storage.mediaBucket.bucketName,
         MEDIA_TABLE: storage.mediaTable.tableName,
+        USAGE_TABLE: storage.usageTable.tableName,
+        SAVES_TABLE: storage.savesTable.tableName,
         FRAMES_TABLE: storage.framesTable.tableName,
         CAPTION_FACTS_TABLE: storage.captionFactsTable.tableName,
         ANALYSIS_MODEL_ID: props.analysisModel,
@@ -228,6 +236,8 @@ export class Pipeline extends Construct {
       environment: {
         MEDIA_BUCKET: storage.mediaBucket.bucketName,
         MEDIA_TABLE: storage.mediaTable.tableName,
+        USAGE_TABLE: storage.usageTable.tableName,
+        SAVES_TABLE: storage.savesTable.tableName,
         FRAMES_TABLE: storage.framesTable.tableName,
         JOBS_TABLE: storage.jobsTable.tableName,
         TRANSCRIPT_SEGMENTS_TABLE: storage.transcriptSegmentsTable.tableName,
@@ -262,6 +272,8 @@ export class Pipeline extends Construct {
       environment: {
         MEDIA_BUCKET: storage.mediaBucket.bucketName,
         MEDIA_TABLE: storage.mediaTable.tableName,
+        USAGE_TABLE: storage.usageTable.tableName,
+        SAVES_TABLE: storage.savesTable.tableName,
         FRAMES_TABLE: storage.framesTable.tableName,
         JOBS_TABLE: storage.jobsTable.tableName,
         CAPTION_FACTS_TABLE: storage.captionFactsTable.tableName,
@@ -294,6 +306,16 @@ export class Pipeline extends Construct {
       }),
     );
     props.search.grantWrite(this.indexFunction);
+
+    // Ledger writes: whoever caused the run is charged for it.
+    for (const fn of [this.analyseFunction, this.downloadFunction, this.indexFunction]) {
+      fn.addToRolePolicy(
+        new iam.PolicyStatement({
+          actions: ['dynamodb:UpdateItem'],
+          resources: [storage.usageTable.tableArn],
+        }),
+      );
+    }
 
     const setMediaStatus = (stateId: string, status: string, extra?: Record<string, string>) =>
       new tasks.DynamoUpdateItem(this, stateId, {
@@ -350,7 +372,11 @@ export class Pipeline extends Construct {
 
     const downloadReel = new tasks.LambdaInvoke(this, 'Download', {
       lambdaFunction: this.downloadFunction,
-      payload: sfn.TaskInput.fromObject({ mediaId: sfn.JsonPath.stringAt('$.mediaId') }),
+      payload: sfn.TaskInput.fromObject({
+        mediaId: sfn.JsonPath.stringAt('$.mediaId'),
+        // Whoever caused this run pays for it; see lambda/shared/ledger.ts.
+        userId: sfn.JsonPath.stringAt('$.userId'),
+      }),
       payloadResponseOnly: true,
       resultPath: '$.download',
       taskTimeout: sfn.Timeout.duration(Duration.minutes(5)),
@@ -365,7 +391,11 @@ export class Pipeline extends Construct {
 
     const extract = new tasks.LambdaInvoke(this, 'Extract', {
       lambdaFunction: this.extractFunction,
-      payload: sfn.TaskInput.fromObject({ mediaId: sfn.JsonPath.stringAt('$.mediaId') }),
+      payload: sfn.TaskInput.fromObject({
+        mediaId: sfn.JsonPath.stringAt('$.mediaId'),
+        // Whoever caused this run pays for it; see lambda/shared/ledger.ts.
+        userId: sfn.JsonPath.stringAt('$.userId'),
+      }),
       payloadResponseOnly: true,
       resultPath: '$.extract',
       taskTimeout: sfn.Timeout.duration(Duration.minutes(5)),
@@ -399,7 +429,11 @@ export class Pipeline extends Construct {
 
     const analyse = new tasks.LambdaInvoke(this, 'Analyse', {
       lambdaFunction: this.analyseFunction,
-      payload: sfn.TaskInput.fromObject({ mediaId: sfn.JsonPath.stringAt('$.mediaId') }),
+      payload: sfn.TaskInput.fromObject({
+        mediaId: sfn.JsonPath.stringAt('$.mediaId'),
+        // Whoever caused this run pays for it; see lambda/shared/ledger.ts.
+        userId: sfn.JsonPath.stringAt('$.userId'),
+      }),
       payloadResponseOnly: true,
       resultPath: '$.analysis',
       taskTimeout: sfn.Timeout.duration(Duration.minutes(5)),
@@ -413,7 +447,11 @@ export class Pipeline extends Construct {
 
     const indexFrames = new tasks.LambdaInvoke(this, 'Index', {
       lambdaFunction: this.indexFunction,
-      payload: sfn.TaskInput.fromObject({ mediaId: sfn.JsonPath.stringAt('$.mediaId') }),
+      payload: sfn.TaskInput.fromObject({
+        mediaId: sfn.JsonPath.stringAt('$.mediaId'),
+        // Whoever caused this run pays for it; see lambda/shared/ledger.ts.
+        userId: sfn.JsonPath.stringAt('$.userId'),
+      }),
       payloadResponseOnly: true,
       resultPath: '$.index',
       taskTimeout: sfn.Timeout.duration(Duration.minutes(5)),
@@ -525,7 +563,11 @@ export class Pipeline extends Construct {
     // from two different paths.
     const analyseCarousel = new tasks.LambdaInvoke(this, 'AnalyseCarousel', {
       lambdaFunction: this.analyseFunction,
-      payload: sfn.TaskInput.fromObject({ mediaId: sfn.JsonPath.stringAt('$.mediaId') }),
+      payload: sfn.TaskInput.fromObject({
+        mediaId: sfn.JsonPath.stringAt('$.mediaId'),
+        // Whoever caused this run pays for it; see lambda/shared/ledger.ts.
+        userId: sfn.JsonPath.stringAt('$.userId'),
+      }),
       payloadResponseOnly: true,
       resultPath: '$.analysis',
       taskTimeout: sfn.Timeout.duration(Duration.minutes(5)),

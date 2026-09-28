@@ -84,7 +84,7 @@ export function planQueries(request: string, expansion?: { topic?: string; queri
 }
 
 /** One request becomes several searches. A failure here costs breadth, not the answer. */
-export async function expandRequest(request: string): Promise<string[]> {
+export async function expandRequest(request: string, userId?: string): Promise<string[]> {
   try {
     const response = await (await claude()).messages.parse({
       model: EXPANSION_MODEL_ID,
@@ -98,7 +98,7 @@ export async function expandRequest(request: string): Promise<string[]> {
       ].join('\n'),
       messages: [{ role: 'user', content: request }],
     });
-    recordUsage('expand', EXPANSION_MODEL_ID, response.usage);
+    recordUsage('expand', EXPANSION_MODEL_ID, response.usage, userId);
     return planQueries(request, response.parsed_output ?? undefined);
   } catch (err) {
     console.warn('query expansion failed; falling back to the request itself', err);
@@ -193,7 +193,7 @@ export async function buildPlan(
   const started = Date.now();
   const since = () => Date.now() - started;
 
-  const queries = await expandRequest(request);
+  const queries = await expandRequest(request, options.userId);
   const expandedAt = since();
 
   const hits = await retrieveMany(queries, {
@@ -250,7 +250,7 @@ export async function buildPlan(
 
   console.log('plan synthesis', { synthesisMs: since() - retrievedAt, totalMs: since() });
 
-  recordUsage('plan', SYNTHESIS_MODEL_ID, response.usage);
+  recordUsage('plan', SYNTHESIS_MODEL_ID, response.usage, options.userId);
 
   const parsed = response.parsed_output;
   if (!parsed) {
