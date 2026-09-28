@@ -1,0 +1,45 @@
+{
+  "name": "reel-lens-infra",
+  "version": "0.1.0",
+  "private": true,
+  "bin": {
+    "reel-lens": "bin/reel-lens.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "synth": "cdk synth",
+    "deploy": "cdk deploy --require-approval broadening",
+    "destroy": "cdk destroy",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.145",
+    "@types/node": "^22.7.5",
+    "aws-cdk": "^2.160.0",
+    "esbuild": "^0.24.0",
+    "tsx": "^4.19.1",
+    "typescript": "~5.6.3"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.128.0",
+    "@aws-sdk/client-apigatewaymanagementapi": "^3.1136.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.1136.0",
+    "@aws-sdk/client-dynamodb": "^3.669.0",
+    "@aws-sdk/client-lambda": "^3.1141.0",
+    "@aws-sdk/client-s3": "^3.669.0",
+    "@aws-sdk/client-secrets-manager": "^3.1137.0",
+    "@aws-sdk/client-sfn": "^3.1136.0",
+    "@aws-sdk/credential-provider-node": "^3.972.83",
+    "@aws-sdk/lib-dynamodb": "^3.669.0",
+    "@aws-sdk/s3-request-presigner": "^3.669.0",
+    "@opensearch-project/opensearch": "^3.6.0",
+    "aws-cdk-lib": "^2.160.0",
+    "aws-jwt-verify": "^4.0.1",
+    "constructs": "^10.3.0",
+    "zod": "^4.6.5"
+  },
+  "allowScripts": {
+    "esbuild@0.24.2": true,
+    "esbuild@0.28.2": true
+  }
+}

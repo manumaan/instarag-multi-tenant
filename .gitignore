@@ -1,0 +1,18 @@
+node_modules/
+.env
+.env.local
+cdk.out/
+.next/
+out/
+*.log
+.DS_Store
+cdk-outputs.json
+tsconfig.tsbuildinfo
+
+# Internal working notes: kept local, not published.
+CLAUDE.md
+
+# Instagram session cookies: a full account credential. Never commit.
+cookies.txt
+*cookies*.txt
+cookies/
