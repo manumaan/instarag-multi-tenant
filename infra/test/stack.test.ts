@@ -140,7 +140,7 @@ test('handlers only see table and bucket names, never credentials', () => {
     for (const key of Object.keys(env)) {
       assert.ok(
         // Resource identifiers only — never a secret, key or token.
-        /^(MEDIA_BUCKET|MEDIA_TABLE|FRAMES_TABLE|JOBS_TABLE|CONNECTIONS_TABLE|CAPTION_FACTS_TABLE|TRANSCRIPT_SEGMENTS_TABLE|STATE_MACHINE_ARN|USER_POOL_ID|USER_POOL_CLIENT_ID|WS_MANAGEMENT_ENDPOINT|SCENE_THRESHOLD|MAX_FRAMES|PHASH_THRESHOLD|MAX_DOWNLOAD_BYTES|YT_DLP_PATH|HOME|XDG_CACHE_HOME|ANALYSIS_MODEL_ID|ANSWER_MODEL_ID|EXPANSION_MODEL_ID|PLAN_WORKER_ARN|THUMBNAIL_FUNCTION_ARN|CLAUDE_KEY_SECRET_ARN|SEARCH_SECRET_ARN|IG_CONNECTION_TABLE|IG_APP_SECRET_ARN|IG_APP_ID|IG_REDIRECT_URI|IG_GRAPH_HOST|IG_AUTHORIZE_URL|IG_TOKEN_URL|ANALYSIS_EFFORT|ANALYSIS_MAX_TOKENS|THREADS_TABLE|MESSAGES_TABLE|SEARCH_ENDPOINT|SEARCH_INDEX|EMBEDDING_MODEL_ID|EMBEDDING_DIMENSION|AWS_NODEJS_CONNECTION_REUSE_ENABLED)$/.test(
+        /^(MEDIA_BUCKET|MEDIA_TABLE|FRAMES_TABLE|JOBS_TABLE|CONNECTIONS_TABLE|CAPTION_FACTS_TABLE|TRANSCRIPT_SEGMENTS_TABLE|STATE_MACHINE_ARN|USER_POOL_ID|USER_POOL_CLIENT_ID|WS_MANAGEMENT_ENDPOINT|SCENE_THRESHOLD|MAX_FRAMES|PHASH_THRESHOLD|MAX_DOWNLOAD_BYTES|YT_DLP_PATH|HOME|XDG_CACHE_HOME|ANALYSIS_MODEL_ID|ANSWER_MODEL_ID|EXPANSION_MODEL_ID|PLAN_WORKER_ARN|THUMBNAIL_FUNCTION_ARN|CLAUDE_KEY_SECRET_ARN|SEARCH_SECRET_ARN|IG_CONNECTION_TABLE|IG_APP_SECRET_ARN|IG_APP_ID|IG_REDIRECT_URI|IG_GRAPH_HOST|IG_AUTHORIZE_URL|IG_TOKEN_URL|ANALYSIS_EFFORT|ANALYSIS_MAX_TOKENS|THREADS_TABLE|SAVES_TABLE|MESSAGES_TABLE|SEARCH_ENDPOINT|SEARCH_INDEX|EMBEDDING_MODEL_ID|EMBEDDING_DIMENSION|AWS_NODEJS_CONNECTION_REUSE_ENABLED)$/.test(
           key,
         ),
         `${name} has unexpected env var ${key}`,
@@ -654,10 +654,14 @@ test('every table holding anything worth keeping has PITR and is retained', () =
     ([logicalId]) => !EPHEMERAL_TABLES.some((name) => logicalId.startsWith(name)),
   );
 
-  // Eight: media, caption facts, transcript segments, threads, messages, frames,
-  // jobs, and the Instagram token table. A ninth appearing here without PITR is
-  // the case this test exists for.
-  assert.equal(tables.length, 8, 'a table was added or removed; decide whether it needs PITR');
+  // Nine: media, caption facts, transcript segments, threads, messages, frames,
+  // jobs, the Instagram token table, and saves. A tenth appearing here without
+  // PITR is the case this test exists for.
+  //
+  // `saves` earns it more than any of the others: content can be re-fetched and
+  // re-analysed, but nothing anywhere else records that a person's library was
+  // theirs. Losing it loses every library while leaving every reel intact.
+  assert.equal(tables.length, 9, 'a table was added or removed; decide whether it needs PITR');
 
   for (const [logicalId, table] of tables) {
     assert.equal(

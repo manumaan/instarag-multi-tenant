@@ -1,5 +1,6 @@
 import { openSearchClient, INDEX_NAME } from './client';
 import { embed } from './embed';
+import { savedMediaIds } from '../shared/saves';
 
 export interface Hit {
   mediaId: string;
@@ -52,8 +53,35 @@ export const hitKey = (hit: Hit) => `${hit.mediaId}:${hit.kind}:${hit.tsMs}`;
 const hitsOf = (response: { body: { hits: { hits: Array<{ _source?: unknown }> } } }) =>
   response.body.hits.hits.map((hit) => toHit((hit._source ?? {}) as Record<string, unknown>));
 
+/**
+ * What this caller is allowed to match against.
+ *
+ * The index holds one document per moment of *global* content — a reel saved by
+ * three people has one set of documents, not three — so nothing in a document
+ * says who may read it. This is the boundary: a query is narrowed to the media
+ * the caller has saved, and a caller with no saves matches nothing.
+ *
+ * `mediaId` scopes further, to one reel, and is checked against the same list:
+ * naming a reel you have not saved gets you an empty result, not someone else's
+ * library.
+ *
+ * The user id comes from the JWT by way of the handler. Nothing here accepts a
+ * media list from a caller — that would be the whole boundary, handed over.
+ */
+export type ScopeFilter = Array<Record<string, unknown>>;
+
+export async function scopeFilter(userId: string, mediaId?: string): Promise<ScopeFilter | undefined> {
+  const saved = await savedMediaIds(userId);
+  if (saved.length === 0) return undefined;
+
+  if (mediaId) {
+    return saved.includes(mediaId) ? [{ term: { media_id: mediaId } }] : undefined;
+  }
+  return [{ terms: { media_id: saved } }];
+}
+
 /** The two rankings one query produces: nearest-neighbour and lexical. */
-async function rankingsFor(query: string, filter: unknown[], size: number): Promise<Hit[][]> {
+async function rankingsFor(query: string, filter: ScopeFilter, size: number): Promise<Hit[][]> {
   const client = openSearchClient();
   const vector = await embed({ text: query });
 
@@ -75,7 +103,7 @@ async function rankingsFor(query: string, filter: unknown[], size: number): Prom
       query: {
         bool: {
           must: [{ knn: { embedding: { vector, k: size } } }],
-          ...(filter.length ? { filter } : {}),
+          filter,
         },
       },
       _source: { excludes: ['embedding'] },
@@ -94,7 +122,7 @@ async function rankingsFor(query: string, filter: unknown[], size: number): Prom
               },
             },
           ],
-          ...(filter.length ? { filter } : {}),
+          filter,
         },
       },
       _source: { excludes: ['embedding'] },
@@ -131,10 +159,15 @@ export async function warmIndex(): Promise<{ warmed: boolean; ms: number }> {
   }
 }
 
-/** kNN and BM25 in parallel, then fused. `mediaId` scopes to one reel. */
-export async function retrieve(question: string, options: { mediaId?: string; limit?: number }): Promise<Hit[]> {
+/** kNN and BM25 in parallel, then fused, over what the caller has saved. */
+export async function retrieve(
+  question: string,
+  options: { userId: string; mediaId?: string; limit?: number },
+): Promise<Hit[]> {
   const limit = options.limit ?? 12;
-  const filter = options.mediaId ? [{ term: { media_id: options.mediaId } }] : [];
+  const filter = await scopeFilter(options.userId, options.mediaId);
+  // Nothing saved, or a reel this caller does not hold: nothing to match.
+  if (!filter) return [];
   const rankings = await rankingsFor(question, filter, limit);
   return fuseRankings(rankings, hitKey).slice(0, limit);
 }
@@ -151,12 +184,13 @@ export async function retrieve(question: string, options: { mediaId?: string; li
  */
 export async function retrieveMany(
   queries: string[],
-  options: { mediaId?: string; perQuery?: number; limit?: number },
+  options: { userId: string; mediaId?: string; perQuery?: number; limit?: number },
 ): Promise<Hit[]> {
   if (queries.length === 0) return [];
   const perQuery = options.perQuery ?? 25;
   const limit = options.limit ?? 60;
-  const filter = options.mediaId ? [{ term: { media_id: options.mediaId } }] : [];
+  const filter = await scopeFilter(options.userId, options.mediaId);
+  if (!filter) return [];
 
   const perQueryRankings = await Promise.all(queries.map((query) => rankingsFor(query, filter, perQuery)));
   return fuseRankings(perQueryRankings.flat(), hitKey).slice(0, limit);

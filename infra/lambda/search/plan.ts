@@ -184,7 +184,10 @@ export interface PlanResult {
  * inside API Gateway's 30-second integration timeout, which cannot be raised on
  * an HTTP API. The Lambda would happily run for 60.
  */
-export async function buildPlan(request: string, options: { mediaId?: string } = {}): Promise<PlanResult> {
+export async function buildPlan(
+  request: string,
+  options: { userId: string; mediaId?: string },
+): Promise<PlanResult> {
   // Stage timings, because this runs against a 30-second ceiling and a total
   // tells you nothing about which stage spent it.
   const started = Date.now();
@@ -194,6 +197,7 @@ export async function buildPlan(request: string, options: { mediaId?: string } =
   const expandedAt = since();
 
   const hits = await retrieveMany(queries, {
+    userId: options.userId,
     mediaId: options.mediaId,
     perQuery: PER_QUERY,
     limit: PLAN_MOMENTS,

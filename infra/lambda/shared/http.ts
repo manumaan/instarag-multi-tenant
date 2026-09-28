@@ -31,6 +31,35 @@ export function parseJsonBody<T>(event: ApiEvent): T {
   }
 }
 
+/**
+ * Who is calling, from the Cognito JWT the authorizer already validated.
+ *
+ * `sub` rather than email: it is the stable identifier, and an email can be
+ * changed. This is the only accepted source of a user id — nothing may take one
+ * from a path, a query string or a body, because that would let a caller name
+ * someone else and read their library.
+ */
+export function callerId(event: ApiEvent): string {
+  const sub = event.requestContext?.authorizer?.jwt?.claims?.sub;
+  if (typeof sub !== 'string' || !sub) {
+    // The route is behind the authorizer, so this means misconfiguration rather
+    // than an anonymous caller. Failing closed is the only safe reading.
+    throw new HttpError(401, 'no authenticated caller');
+  }
+  return sub;
+}
+
+/** Cognito groups from the same token, for the admin screens. */
+export function callerGroups(event: ApiEvent): string[] {
+  const groups = event.requestContext?.authorizer?.jwt?.claims?.['cognito:groups'];
+  if (Array.isArray(groups)) return groups.map(String);
+  // A single group arrives as a bracketed string, e.g. "[admin]".
+  if (typeof groups === 'string') return groups.replace(/^\[|\]$/g, '').split(/[\s,]+/).filter(Boolean);
+  return [];
+}
+
+export const isAdmin = (event: ApiEvent) => callerGroups(event).includes('admin');
+
 export function pathParam(event: ApiEvent, name: string): string {
   const value = event.pathParameters?.[name];
   if (!value) throw badRequest(`missing path parameter ${name}`);

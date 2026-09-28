@@ -182,6 +182,7 @@ export class Api extends Construct {
       ...commonEnv,
       THREADS_TABLE: storage.threadsTable.tableName,
       MESSAGES_TABLE: storage.messagesTable.tableName,
+      SAVES_TABLE: storage.savesTable.tableName,
       SEARCH_ENDPOINT: props.search.endpoint,
       SEARCH_INDEX: 'frames',
       ANSWER_MODEL_ID: props.answerModel,
@@ -219,6 +220,7 @@ export class Api extends Construct {
     const planWorker = makeSearchFn('PlanWorker', 'plan-worker.ts', 'handler');
     planWorker.addEnvironment('EXPANSION_MODEL_ID', props.expansionModel);
     props.claudeKey.grantRead(planWorker);
+    allow(planWorker, ['dynamodb:Query'], [storage.savesTable.tableArn]);
     (planWorker.node.defaultChild as lambda.CfnFunction).timeout = 300;
     allow(planWorker, ['dynamodb:UpdateItem'], [storage.messagesTable.tableArn]);
     allow(planWorker, ['dynamodb:BatchGetItem'], [storage.mediaTable.tableArn]);
@@ -228,6 +230,8 @@ export class Api extends Construct {
     const ask = makeSearchFn('Ask', 'ask.ts');
     ask.addEnvironment('EXPANSION_MODEL_ID', props.expansionModel);
     props.claudeKey.grantRead(ask);
+    // The boundary: Ask can only match what this table says the caller holds.
+    allow(ask, ['dynamodb:Query'], [storage.savesTable.tableArn]);
     ask.addEnvironment('PLAN_WORKER_ARN', planWorker.functionArn);
     planWorker.grantInvoke(ask);
     allow(ask, ['dynamodb:PutItem'], [storage.threadsTable.tableArn]);
@@ -252,6 +256,8 @@ export class Api extends Construct {
     });
 
     const lensSimilar = makeSearchFn('LensSimilar', 'lens.ts', 'similar');
+    // Query for the scope filter, GetItem for "may this caller search from this frame".
+    allow(lensSimilar, ['dynamodb:Query', 'dynamodb:GetItem'], [storage.savesTable.tableArn]);
     allow(lensSimilar, ['s3:GetObject'], [
       storage.mediaBucket.arnForObjects('lens/*'),
       storage.mediaBucket.arnForObjects('media/*'),

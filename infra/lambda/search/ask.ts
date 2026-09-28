@@ -5,7 +5,7 @@ import { claude } from '../shared/claude';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { z } from 'zod';
 import { ddb } from '../shared/ddb';
-import { badRequest, handler, parseJsonBody } from '../shared/http';
+import { badRequest, callerId, handler, parseJsonBody } from '../shared/http';
 import { retrieve, warmIndex, type Hit } from './retrieve';
 import { sourcesFor } from './sources';
 import { recordUsage } from '../shared/usage';
@@ -56,9 +56,10 @@ export const main = handler(async (event) => {
   if (!question) throw badRequest('question is required');
   if (question.length > 1000) throw badRequest('question is too long');
 
-  if (body.mode === 'plan') return planAnswer(question, body);
+  const userId = callerId(event);
+  if (body.mode === 'plan') return planAnswer(question, body, userId);
 
-  const hits = await retrieve(question, { mediaId: body.mediaId });
+  const hits = await retrieve(question, { userId, mediaId: body.mediaId });
 
   if (hits.length === 0) {
     return {
@@ -202,7 +203,7 @@ async function startThread(threadId: string, mediaId: string | undefined, questi
  * assistant message is written as `working` and a worker fills it in; the UI
  * polls GET /threads/{id} until its status changes.
  */
-async function planAnswer(request: string, body: AskBody) {
+async function planAnswer(request: string, body: AskBody, userId: string) {
   const threadId = body.threadId ?? randomUUID();
   const now = new Date().toISOString();
   // Microsecond suffix keeps the answer after its question in sort order.
@@ -215,8 +216,14 @@ async function planAnswer(request: string, body: AskBody) {
       FunctionName: PLAN_WORKER_ARN,
       // Fire and forget: the answer arrives on the message, not on this response.
       InvocationType: 'Event',
+      /*
+       * The worker has no token of its own, so the caller rides in the payload.
+       * That is safe because this value came from the JWT one line above and
+       * the invoke is server-to-server — but it means the worker must treat it
+       * as given, never as something to re-derive from the request.
+       */
       Payload: Buffer.from(
-        JSON.stringify({ threadId, createdAt: assistantAt, request, mediaId: body.mediaId }),
+        JSON.stringify({ threadId, createdAt: assistantAt, request, mediaId: body.mediaId, userId }),
       ),
     }),
   );

@@ -6,6 +6,8 @@ import { planToText, sourcesFor } from './sources';
 const MESSAGES_TABLE = process.env.MESSAGES_TABLE!;
 
 export interface PlanJob {
+  /** From the JWT at the request that started this, not from anything the job saw. */
+  userId: string;
   threadId: string;
   /** Sort key of the assistant message this job fills in. */
   createdAt: string;
@@ -25,11 +27,11 @@ export interface PlanJob {
  * already existed.
  */
 export async function handler(job: PlanJob): Promise<void> {
-  const { threadId, createdAt, request, mediaId } = job;
+  const { threadId, createdAt, request, mediaId, userId } = job;
   console.log('plan job started', { threadId, createdAt, mediaId });
 
   try {
-    const plan = await buildPlan(request, { mediaId });
+    const plan = await buildPlan(request, { userId, mediaId });
     const cited = plan.sections.flatMap((section) => section.items.flatMap((item) => item.citations));
     const sources = await sourcesFor([...new Set(cited.map((c) => c.media_id))]);
 

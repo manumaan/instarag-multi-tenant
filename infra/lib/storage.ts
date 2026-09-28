@@ -22,6 +22,7 @@ export class Storage extends Construct {
   readonly mediaBucket: s3.Bucket;
   readonly mediaTable: dynamodb.Table;
   readonly framesTable: dynamodb.Table;
+  readonly savesTable: dynamodb.Table;
   readonly jobsTable: dynamodb.Table;
   readonly connectionsTable: dynamodb.Table;
   readonly captionFactsTable: dynamodb.Table;
@@ -32,6 +33,8 @@ export class Storage extends Construct {
   /** Constant partition key value for the media recency index. */
   static readonly MEDIA_ENTITY = 'media';
   /** GSI on the media table: newest-first library listing. */
+  static readonly SAVES_BY_SAVED_AT = 'bySavedAt';
+  static readonly SAVES_BY_MEDIA = 'byMedia';
   static readonly MEDIA_BY_CREATED_AT = 'byCreatedAt';
   /** Sparse GSI: find an already-ingested reel by its permalink. */
   static readonly MEDIA_BY_PERMALINK = 'byPermalink';
@@ -162,6 +165,35 @@ export class Storage extends Construct {
       partitionKey: { name: 'media_id', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'ts_ms', type: dynamodb.AttributeType.NUMBER },
       ...durable,
+    });
+
+    /*
+     * Who has what. Content is global — one download, one analysis and one set
+     * of index documents however many people save a reel — so this is the only
+     * table that knows a library belongs to someone, and the only thing every
+     * authorisation check reads.
+     *
+     * Partitioning on user_id also disposes of the single-user compromise this
+     * replaces: media recency used to live on a GSI with a constant partition
+     * key, which is one hot partition the moment there is a second person.
+     */
+    this.savesTable = new dynamodb.Table(this, 'SavesTable', {
+      partitionKey: { name: 'user_id', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'media_id', type: dynamodb.AttributeType.STRING },
+      ...durable,
+    });
+    // The library grid: one user's saves, newest first.
+    this.savesTable.addGlobalSecondaryIndex({
+      indexName: Storage.SAVES_BY_SAVED_AT,
+      partitionKey: { name: 'user_id', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'saved_at', type: dynamodb.AttributeType.STRING },
+      projectionType: dynamodb.ProjectionType.ALL,
+    });
+    // Who to notify when a piece of content changes state.
+    this.savesTable.addGlobalSecondaryIndex({
+      indexName: Storage.SAVES_BY_MEDIA,
+      partitionKey: { name: 'media_id', type: dynamodb.AttributeType.STRING },
+      projectionType: dynamodb.ProjectionType.KEYS_ONLY,
     });
 
     this.jobsTable = new dynamodb.Table(this, 'JobsTable', {

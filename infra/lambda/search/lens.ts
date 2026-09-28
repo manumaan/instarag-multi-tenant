@@ -3,8 +3,10 @@ import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { BatchGetCommand } from '@aws-sdk/lib-dynamodb';
 import { ddb, TABLES } from '../shared/ddb';
-import { badRequest, handler, parseJsonBody } from '../shared/http';
+import { badRequest, callerId, handler, parseJsonBody } from '../shared/http';
 import { documentId, openSearchClient, INDEX_NAME } from './client';
+import { scopeFilter } from './retrieve';
+import { hasSaved } from '../shared/saves';
 import { embed } from './embed';
 
 const s3 = new S3Client({});
@@ -69,6 +71,7 @@ export interface SimilarMatch {
  */
 export const similar = handler(async (event) => {
   const body = parseJsonBody<SimilarBody>(event);
+  const userId = callerId(event);
   const limit = Math.min(Math.max(body.limit ?? 12, 1), 50);
   const client = openSearchClient();
 
@@ -81,6 +84,11 @@ export const similar = handler(async (event) => {
     const imageBase64 = Buffer.from(await object.Body!.transformToByteArray()).toString('base64');
     vector = await embed({ imageBase64 });
   } else if (body.mediaId && typeof body.tsMs === 'number') {
+    // Searching *from* a frame requires holding the reel it belongs to. Without
+    // this, naming any reel would hand back its stored vector's neighbours.
+    if (!(await hasSaved(userId, body.mediaId))) {
+      throw badRequest(`frame ${body.tsMs}ms of ${body.mediaId} is not in your library`);
+    }
     // Reuse the vector already in the index rather than re-embedding the frame.
     excludeId = documentId(body.mediaId, body.tsMs, 'frame');
     // Only a genuine 404 means "not indexed"; anything else (permissions, a
@@ -101,6 +109,15 @@ export const similar = handler(async (event) => {
     throw badRequest('either s3Key, or mediaId and tsMs, is required');
   }
 
+  /*
+   * Lens searches the index directly rather than through retrieve(), so it needs
+   * the same boundary applied here. Without it a screenshot would match frames
+   * from every library in the system, which is the leak this whole design is
+   * arranged to prevent.
+   */
+  const scope = await scopeFilter(userId);
+  if (!scope) return { matches: [] };
+
   const response = await client.search({
     index: INDEX_NAME,
     body: {
@@ -110,7 +127,7 @@ export const similar = handler(async (event) => {
         bool: {
           must: [{ knn: { embedding: { vector, k: limit + 1 } } }],
           // Frames only: a spoken line has no image to look like.
-          filter: [{ term: { kind: 'frame' } }],
+          filter: [{ term: { kind: 'frame' } }, ...scope] as never,
         },
       },
       _source: { excludes: ['embedding'] },
