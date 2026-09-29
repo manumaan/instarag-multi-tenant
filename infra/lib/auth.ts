@@ -29,6 +29,14 @@ export class Auth extends Construct {
   readonly domain: cognito.UserPoolDomain;
   /** Group name the API checks for on the admin routes. */
   static readonly ADMIN_GROUP = 'admin';
+  /**
+   * The mobile app's URL scheme (mobile/app.json). The app signs in through the
+   * same client as the web, so the API's authorizer accepts its tokens as they
+   * are; Cognito only needs to be allowed to redirect back into it. The same
+   * PKCE flow protects a custom scheme: an app that registered it too would
+   * receive a code it cannot redeem without the verifier.
+   */
+  static readonly MOBILE_SCHEME = 'reellens';
 
   constructor(scope: Construct, id: string, props: AuthProps) {
     super(scope, id);
@@ -83,7 +91,11 @@ export class Auth extends Construct {
       description: 'May invite others and see what each account has cost.',
     });
 
-    const callbackUrls = props.webOrigins.map((o) => `${o}/auth/callback`);
+    const callbackUrls = [
+      ...props.webOrigins.map((o) => `${o}/auth/callback`),
+      `${Auth.MOBILE_SCHEME}://auth/callback`,
+    ];
+    const logoutUrls = [...props.webOrigins, `${Auth.MOBILE_SCHEME}://signed-out`];
 
     this.userPoolClient = this.userPool.addClient('WebClient', {
       generateSecret: false, // public SPA client; PKCE instead of a secret
@@ -92,7 +104,7 @@ export class Auth extends Construct {
         flows: { authorizationCodeGrant: true },
         scopes: [cognito.OAuthScope.OPENID, cognito.OAuthScope.EMAIL, cognito.OAuthScope.PROFILE],
         callbackUrls,
-        logoutUrls: props.webOrigins,
+        logoutUrls,
       },
       preventUserExistenceErrors: true,
       accessTokenValidity: Duration.hours(1),

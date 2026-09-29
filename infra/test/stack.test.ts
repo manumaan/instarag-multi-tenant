@@ -94,6 +94,14 @@ test('the user pool refuses self-signup and hands out no client secret', () => {
   });
 });
 
+test('the mobile app can sign in through the same client as the web', () => {
+  const template = synth();
+  template.hasResourceProperties('AWS::Cognito::UserPoolClient', {
+    CallbackURLs: Match.arrayWith(['reellens://auth/callback']),
+    LogoutURLs: Match.arrayWith(['reellens://signed-out']),
+  });
+});
+
 test('the invite email is written by a trigger, since the pool template cannot greet by name', () => {
   const template = synth();
   template.hasResourceProperties('AWS::Cognito::UserPool', {
