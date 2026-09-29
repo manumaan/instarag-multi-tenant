@@ -4,6 +4,7 @@ import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import { NodejsFunction, OutputFormat } from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as logs from 'aws-cdk-lib/aws-logs';
+import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 
 export interface AuthProps {
@@ -123,6 +124,39 @@ export class Auth extends Construct {
       cognitoDomain: {
         domainPrefix: `${stack.stackName.toLowerCase().replace(/[^a-z0-9]/g, '')}-${stack.account}`,
       },
+      // Managed login, not the classic hosted UI: it is the version that takes
+      // real branding, so the sign-in sheet looks like part of the app rather
+      // than a generic AWS form. Needs the Essentials feature plan, which this
+      // pool is on. Switching signs everyone out of the Cognito page once
+      // (the app's own tokens are unaffected).
+      managedLoginVersion: cognito.ManagedLoginVersion.NEWER_MANAGED_LOGIN,
+    });
+
+    /*
+     * The sign-in page's look, in the app's own palette (mobile/src/components/ui.tsx):
+     * its background, blue buttons and links, rounded form, and a Reel Lens
+     * logo, following the device's light or dark mode as the app does.
+     *
+     * Managed login renders nothing for an app client without a style, and a
+     * client created through CloudFormation gets none by default. The settings
+     * file started as Cognito's own default document — read back with
+     * describe-managed-login-branding-by-client, as AWS's docs advise, since
+     * the schema is large — with only the look changed, so every key in it is
+     * one Cognito recognises.
+     */
+    const brandingDir = path.join(__dirname, 'branding');
+    const logo = (mode: 'LIGHT' | 'DARK') => ({
+      category: 'FORM_LOGO',
+      colorMode: mode,
+      extension: 'SVG',
+      bytes: readFileSync(path.join(brandingDir, `logo-${mode.toLowerCase()}.svg`)).toString('base64'),
+    });
+    new cognito.CfnManagedLoginBranding(this, 'LoginBranding', {
+      userPoolId: this.userPool.userPoolId,
+      clientId: this.userPoolClient.userPoolClientId,
+      useCognitoProvidedValues: false,
+      settings: JSON.parse(readFileSync(path.join(brandingDir, 'managed-login.json'), 'utf8')),
+      assets: [logo('LIGHT'), logo('DARK')],
     });
   }
 }

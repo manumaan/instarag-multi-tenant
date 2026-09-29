@@ -4,11 +4,13 @@ import {
   refreshAsync,
   revokeAsync,
   useAuthRequest,
+  type AuthRequestPromptOptions,
   type DiscoveryDocument,
 } from 'expo-auth-session';
 import * as SecureStore from 'expo-secure-store';
 import * as WebBrowser from 'expo-web-browser';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Appearance, Platform } from 'react-native';
 import { COGNITO_DOMAIN, SCHEME, USER_POOL_CLIENT_ID } from './config';
 
 /*
@@ -28,6 +30,30 @@ const discovery: DiscoveryDocument = {
 const redirectUri = makeRedirectUri({ scheme: SCHEME, path: 'auth/callback' });
 const signedOutUri = `${SCHEME}://signed-out`;
 const STORE_KEY = 'reellens.tokens';
+
+/**
+ * How the sign-in sheet is presented, so it reads as part of the app. The
+ * page itself is Cognito's managed login, branded in infra/lib/auth.ts.
+ *
+ * - iOS: an ephemeral session. It drops the system's "wants to use … to Sign
+ *   In" prompt and keeps no browser cookie — which this app never needed,
+ *   since it keeps its own tokens.
+ * - Android: a Chrome tab in the app's colours, without the page title or the
+ *   share button. (Ephemeral sessions are iOS-only.)
+ */
+function sheetOptions(): AuthRequestPromptOptions {
+  const dark = Appearance.getColorScheme() === 'dark';
+  return {
+    preferEphemeralSession: true,
+    showTitle: false,
+    enableDefaultShareMenuItem: false,
+    showInRecents: false,
+    toolbarColor: dark ? '#1d1d1c' : '#ffffff',
+    secondaryToolbarColor: dark ? '#1d1d1c' : '#ffffff',
+    controlsColor: dark ? '#748ffc' : '#3b5bdb',
+    dismissButtonStyle: 'cancel',
+  };
+}
 /** Refresh this long before expiry, so a token never lapses mid-request. */
 const REFRESH_MARGIN_MS = 60_000;
 
@@ -144,7 +170,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signIn = useCallback(async () => {
     if (!request) return;
     setError(undefined);
-    const result = await promptAsync();
+    const result = await promptAsync(sheetOptions());
     if (result.type !== 'success') {
       if (result.type === 'error') setError(result.error?.message ?? 'sign-in failed');
       return;
@@ -175,12 +201,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         discovery,
       ).catch(() => undefined);
     }
-    // Clear the Hosted UI's own session cookie too, or the next "Sign in" would
-    // silently sign the same person straight back in.
-    await WebBrowser.openAuthSessionAsync(
-      `https://${COGNITO_DOMAIN}/logout?client_id=${USER_POOL_CLIENT_ID}&logout_uri=${encodeURIComponent(signedOutUri)}`,
-      signedOutUri,
-    ).catch(() => undefined);
+    // On Android the sign-in tab shares Chrome's cookies, so Cognito's own
+    // session (an hour) must be cleared too, or the next "Sign in" would put
+    // the same person straight back in. iOS signs in ephemerally and keeps no
+    // cookie, so there it would only flash a browser sheet for nothing.
+    if (Platform.OS !== 'ios') {
+      await WebBrowser.openAuthSessionAsync(
+        `https://${COGNITO_DOMAIN}/logout?client_id=${USER_POOL_CLIENT_ID}&logout_uri=${encodeURIComponent(signedOutUri)}`,
+        signedOutUri,
+        sheetOptions(),
+      ).catch(() => undefined);
+    }
   }, []);
 
   const value = useMemo(() => ({ status, signIn, signOut, error }), [status, signIn, signOut, error]);

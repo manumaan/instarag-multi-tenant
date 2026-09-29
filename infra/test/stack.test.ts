@@ -125,6 +125,18 @@ test('the mobile app can sign in through the same client as the web', () => {
   });
 });
 
+test('sign-in is the branded managed login, not the classic hosted UI', () => {
+  const template = synth();
+  template.hasResourceProperties('AWS::Cognito::UserPoolDomain', { ManagedLoginVersion: 2 });
+  // Our style, not Cognito's defaults — a regression to `true` would bring back
+  // the generic AWS page without anything failing.
+  template.hasResourceProperties('AWS::Cognito::ManagedLoginBranding', {
+    UseCognitoProvidedValues: false,
+    Assets: Match.arrayWith([Match.objectLike({ Category: 'FORM_LOGO', ColorMode: 'LIGHT' })]),
+    Settings: Match.objectLike({ categories: Match.objectLike({ global: Match.objectLike({ colorSchemeMode: 'DYNAMIC' }) }) }),
+  });
+});
+
 test('the invite email is written by a trigger, since the pool template cannot greet by name', () => {
   const template = synth();
   template.hasResourceProperties('AWS::Cognito::UserPool', {

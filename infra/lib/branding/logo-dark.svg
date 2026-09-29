@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="220" height="56" viewBox="0 0 220 56">
+  <title>Reel Lens</title>
+  <circle cx="26" cy="26" r="16" fill="none" stroke="#748ffc" stroke-width="5"/>
+  <circle cx="26" cy="26" r="6" fill="#748ffc"/>
+  <line x1="37.5" y1="37.5" x2="48" y2="48" stroke="#748ffc" stroke-width="6" stroke-linecap="round"/>
+  <text x="60" y="36" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="27" font-weight="700" fill="#ededea">Reel Lens</text>
+</svg>
