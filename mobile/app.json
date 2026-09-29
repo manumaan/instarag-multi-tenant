@@ -43,7 +43,8 @@
       "expo-secure-store",
       "expo-video",
       "expo-image",
-      "expo-status-bar"
+      "expo-status-bar",
+      "./plugins/with-scene-lifecycle"
     ]
   }
 }

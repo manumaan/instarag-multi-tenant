@@ -427,6 +427,21 @@ export class Pipeline extends Construct {
     const markExtracting = setMediaStatus('MarkExtracting', 'extracting');
     const markReady = setMediaStatus('MarkReady', 'ready');
 
+    /*
+     * The Claude API being briefly unavailable (5xx, 529 overloaded, 429). The
+     * handler names only those failures ModelUnavailable, so a refusal or an
+     * unparsable answer is not re-run — each attempt is a full vision pass.
+     * Longer waits than the Lambda retries above: the SDK has already retried
+     * within seconds, so what is left is an incident, and 30s + 60s + 120s
+     * rides out a short one while fitting the machine's 15-minute timeout.
+     */
+    const modelUnavailableRetry: sfn.RetryProps = {
+      errors: ['ModelUnavailable'],
+      interval: Duration.seconds(30),
+      maxAttempts: 3,
+      backoffRate: 2,
+    };
+
     const analyse = new tasks.LambdaInvoke(this, 'Analyse', {
       lambdaFunction: this.analyseFunction,
       payload: sfn.TaskInput.fromObject({
@@ -444,6 +459,7 @@ export class Pipeline extends Construct {
       maxAttempts: 3,
       backoffRate: 2,
     });
+    analyse.addRetry(modelUnavailableRetry);
 
     const indexFrames = new tasks.LambdaInvoke(this, 'Index', {
       lambdaFunction: this.indexFunction,
@@ -578,6 +594,7 @@ export class Pipeline extends Construct {
       maxAttempts: 3,
       backoffRate: 2,
     });
+    analyseCarousel.addRetry(modelUnavailableRetry);
 
     const analyseAndTranscribe = new sfn.Parallel(this, 'AnalyseAndTranscribe', {
       // The branches persist their own results; the next state needs the

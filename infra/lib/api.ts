@@ -151,11 +151,10 @@ export class Api extends Construct {
     allow(listMedia, ['dynamodb:Query'], [storage.savesTable.tableArn, `${storage.savesTable.tableArn}/index/*`]);
     // Presigning the grid's thumbnails needs read access to the frames.
     allow(listMedia, ['s3:GetObject'], [storage.mediaBucket.arnForObjects('media/*')]);
-    allow(
-      listMedia,
-      ['dynamodb:Query'],
-      [storage.savesTable.tableArn, `${storage.savesTable.tableArn}/index/${Storage.SAVES_BY_SAVED_AT}`],
-    );
+    // Then the content those saves point at. Only reached once a library has
+    // something in it, so an empty library never exercised it: the grant was
+    // missing, and every non-empty library failed AccessDenied.
+    allow(listMedia, ['dynamodb:BatchGetItem'], [storage.mediaTable.tableArn]);
 
     const getMedia = makeFn('GetMedia', 'get-media.ts');
     // saves: holding it is the authorisation.

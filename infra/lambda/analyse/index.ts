@@ -1,6 +1,6 @@
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { GetCommand, PutCommand, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
-import { claude } from '../shared/claude';
+import { claude, classifyModelError } from '../shared/claude';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { ddb, TABLES } from '../shared/ddb';
 import { tsMsToSlide, type MediaRecord } from '../shared/media';
@@ -87,13 +87,19 @@ export async function handler(event: AnalyseEvent): Promise<AnalyseResult> {
     }),
   });
 
-  const response = await (await claude()).messages.parse({
-    model: MODEL_ID,
-    max_tokens: MAX_TOKENS,
-    thinking: { type: 'adaptive' },
-    output_config: { effort: EFFORT, format: zodOutputFormat(AnalysisSchema) },
-    messages: [{ role: 'user', content: content as never }],
-  });
+  const response = await (await claude())
+    .messages.parse({
+      model: MODEL_ID,
+      max_tokens: MAX_TOKENS,
+      thinking: { type: 'adaptive' },
+      output_config: { effort: EFFORT, format: zodOutputFormat(AnalysisSchema) },
+      messages: [{ role: 'user', content: content as never }],
+    })
+    // A transient API failure becomes ModelUnavailable, which the pipeline
+    // retries with backoff; see classifyModelError.
+    .catch((err: unknown) => {
+      throw classifyModelError(err);
+    });
 
   if (response.stop_reason === 'refusal') {
     throw new Error('the model declined to analyse this reel');

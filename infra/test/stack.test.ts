@@ -94,6 +94,29 @@ test('the user pool refuses self-signup and hands out no client secret', () => {
   });
 });
 
+test('both analysis states retry a briefly unavailable model, and only that', () => {
+  // Analyse runs inside the Parallel beside transcription, so look in branches too.
+  const all: Record<string, Record<string, unknown>> = {};
+  const collect = (states: Record<string, Record<string, unknown>>) => {
+    for (const [name, state] of Object.entries(states)) {
+      all[name] = state;
+      for (const branch of (state.Branches ?? []) as Array<{ States: Record<string, Record<string, unknown>> }>) {
+        collect(branch.States);
+      }
+    }
+  };
+  collect(stateMachineGraph(synth()));
+  for (const name of ['Analyse', 'AnalyseCarousel']) {
+    assert.ok(all[name], `${name} state not found`);
+    const retries = (all[name].Retry ?? []) as Array<{ ErrorEquals: string[]; IntervalSeconds?: number }>;
+    const model = retries.find((r) => r.ErrorEquals.includes('ModelUnavailable'));
+    assert.ok(model, `${name} must retry ModelUnavailable`);
+    assert.ok((model.IntervalSeconds ?? 0) >= 30, `${name} should wait out an incident, not hammer it`);
+    // Retrying every error would re-run refusals and bad output at full cost.
+    assert.ok(!retries.some((r) => r.ErrorEquals.includes('States.ALL') || r.ErrorEquals.includes('Error')), `${name} retries too broadly`);
+  }
+});
+
 test('the mobile app can sign in through the same client as the web', () => {
   const template = synth();
   template.hasResourceProperties('AWS::Cognito::UserPoolClient', {

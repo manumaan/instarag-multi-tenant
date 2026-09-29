@@ -40,3 +40,28 @@ export function claude(): Promise<Anthropic> {
     throw err;
   });
 }
+
+/** Status codes that say "not now" rather than "not this request". */
+const TRANSIENT_STATUS = new Set([408, 409, 429, 500, 502, 503, 504, 529]);
+
+/**
+ * Renames a failure the API will probably not repeat to `ModelUnavailable`,
+ * the name the pipeline retries with backoff; anything else passes through.
+ *
+ * The SDK already retries twice within a second or two, which a real incident
+ * outlasts: on 2026-09-29 an Anthropic incident answered every real key with
+ * "503 credential validation failed" for well over ten minutes, and a reel
+ * that hit it failed outright. Its error surfaced as a bare `Error`, and
+ * retrying on that name would also re-run permanent failures — a refusal, an
+ * unparsable answer — each one another full vision pass. So only this name is
+ * retried, and only for this.
+ */
+export function classifyModelError(err: unknown): unknown {
+  const transient =
+    err instanceof Anthropic.APIConnectionError ||
+    (err instanceof Anthropic.APIError && err.status !== undefined && TRANSIENT_STATUS.has(err.status));
+  if (!transient) return err;
+  const renamed = new Error((err as Error).message);
+  renamed.name = 'ModelUnavailable';
+  return renamed;
+}

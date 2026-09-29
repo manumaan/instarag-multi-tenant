@@ -112,6 +112,9 @@ export default function Library() {
         data={items}
         keyExtractor={(m) => m.id}
         contentContainerStyle={{ padding: 16, gap: 12 }}
+        // Without this, a tap on Add while the link field has focus only
+        // dismisses the keyboard, and the button never sees the press.
+        keyboardShouldPersistTaps="handled"
         onEndReached={() => void loadMore()}
         onEndReachedThreshold={0.5}
         refreshControl={
