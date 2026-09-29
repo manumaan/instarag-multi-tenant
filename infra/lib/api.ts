@@ -254,7 +254,9 @@ export class Api extends Construct {
     allow(ask, ['dynamodb:Query'], [storage.savesTable.tableArn]);
     ask.addEnvironment('PLAN_WORKER_ARN', planWorker.functionArn);
     planWorker.grantInvoke(ask);
-    allow(ask, ['dynamodb:PutItem'], [storage.threadsTable.tableArn]);
+    // GetItem as well: a continued thread is checked against its owner before
+    // a turn is appended to it.
+    allow(ask, ['dynamodb:PutItem', 'dynamodb:GetItem'], [storage.threadsTable.tableArn]);
     allow(ask, ['dynamodb:PutItem', 'dynamodb:Query'], [storage.messagesTable.tableArn]);
     // A plan cites a dozen clips; the ids have to become names the reader knows.
     allow(ask, ['dynamodb:BatchGetItem'], [storage.mediaTable.tableArn]);
@@ -298,6 +300,8 @@ export class Api extends Construct {
       storage.mediaBucket.arnForObjects('media/*'),
     ]);
     allow(lensWeb, ['dynamodb:Query'], [storage.framesTable.tableArn]);
+    // "May this caller search from this frame" — the same check find-similar makes.
+    allow(lensWeb, ['dynamodb:GetItem'], [storage.savesTable.tableArn]);
     // No Bedrock grant: Lens web reads entities off a frame and summarises the
     // search results, both on the Anthropic API, and it embeds nothing.
 
@@ -355,10 +359,13 @@ export class Api extends Construct {
     allow(adminUsage, ['dynamodb:Scan'], [storage.usageTable.tableArn]);
 
     const listThreads = makeSearchFn('ListThreads', 'list-threads.ts');
-    allow(listThreads, ['dynamodb:Query'], [`${storage.threadsTable.tableArn}/index/byCreatedAt`]);
+    allow(listThreads, ['dynamodb:Query'], [`${storage.threadsTable.tableArn}/index/${Storage.THREADS_BY_CREATED_AT}`]);
 
     const getThread = makeSearchFn('GetThread', 'get-thread.ts');
     allow(getThread, ['dynamodb:Query'], [storage.messagesTable.tableArn]);
+    // The ownership check, which is the only thing between a guessed thread id
+    // and someone else's conversation.
+    allow(getThread, ['dynamodb:GetItem'], [storage.threadsTable.tableArn]);
 
     // Retrying is a real re-run: it clears whatever a half-finished pipeline
     // left behind, so it needs the same reach as delete plus the pipeline.

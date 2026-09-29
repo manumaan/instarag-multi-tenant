@@ -6,15 +6,13 @@ import { ddb, TABLES } from '../shared/ddb';
 import { badRequest, callerId, handler, parseJsonBody } from '../shared/http';
 import { documentId, openSearchClient, INDEX_NAME } from './client';
 import { scopeFilter } from './retrieve';
+import { lensPrefixFor, requireOwnLensKey } from '../shared/lens';
 import { hasSaved } from '../shared/saves';
 import { embed } from './embed';
 
 const s3 = new S3Client({});
 const BUCKET = process.env.MEDIA_BUCKET!;
 const URL_TTL_SECONDS = 900;
-
-/** Lens query images live under their own prefix and expire on a lifecycle rule. */
-const LENS_PREFIX = 'lens/';
 
 const ALLOWED_IMAGE_TYPES: Record<string, string> = {
   'image/jpeg': '.jpg',
@@ -25,6 +23,7 @@ const MAX_QUERY_BYTES = 20 * 1024 * 1024;
 
 /** POST /lens/uploads — presigned PUT for a screenshot to search with. */
 export const upload = handler(async (event) => {
+  const userId = callerId(event);
   const body = parseJsonBody<{ contentType?: string; bytes?: number }>(event);
   const contentType = body.contentType?.toLowerCase();
   if (!contentType) throw badRequest('contentType is required');
@@ -35,7 +34,7 @@ export const upload = handler(async (event) => {
   if (typeof body.bytes !== 'number' || body.bytes <= 0) throw badRequest('bytes must be a positive number');
   if (body.bytes > MAX_QUERY_BYTES) throw badRequest(`image exceeds the ${MAX_QUERY_BYTES} byte limit`);
 
-  const key = `${LENS_PREFIX}${randomUUID()}${extension}`;
+  const key = `${lensPrefixFor(userId)}${randomUUID()}${extension}`;
   const uploadUrl = await getSignedUrl(
     s3,
     new PutObjectCommand({ Bucket: BUCKET, Key: key, ContentType: contentType }),
@@ -79,7 +78,7 @@ export const similar = handler(async (event) => {
   let excludeId: string | undefined;
 
   if (body.s3Key) {
-    if (!body.s3Key.startsWith(LENS_PREFIX)) throw badRequest('s3Key must be a lens upload');
+    requireOwnLensKey(userId, body.s3Key);
     const object = await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: body.s3Key }));
     const imageBase64 = Buffer.from(await object.Body!.transformToByteArray()).toString('base64');
     vector = await embed({ imageBase64 });

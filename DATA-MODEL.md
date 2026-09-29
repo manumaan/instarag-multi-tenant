@@ -47,11 +47,20 @@ Changes from the MVP are marked. Everything unmarked is as it is today.
 ### `frames`, `caption_facts`, `transcript_segments`
 Unchanged, still keyed by `media_id`. They are derived from content, so they are global too.
 
-### `threads`, `messages` — private
-- **Changed:** `threads` PK becomes `user_id`, SK `thread_id`; the constant-partition
-  `byCreatedAt` GSI is replaced by sort-key ordering per user.
+### `threads`, `messages` — private *(implemented)*
+- **Done:** `threads` is PK `user_id`, SK `id`. Listing someone's threads is a query inside
+  their own partition, and there is no key that reaches anyone else's.
+- **Done:** the constant-partition `byCreatedAt` GSI — partitioned on the literal `'thread'`,
+  so `GET /threads` returned everybody's — is replaced by a **local** secondary index on
+  `created_at`: same partition, sorted by time, which is the thing the constant partition
+  was faking. An LSI is created with its table and cannot be added later.
 - `messages` unchanged (PK `thread_id`, SK `created_at`), reached only through a thread the
-  caller owns.
+  caller owns. It is keyed by thread alone and **cannot tell whose hand is on it**, so
+  `requireThread` is the one check standing in front of it, applied by `GET /threads/{id}`
+  and by `POST /ask` before a turn is appended. That matters because a thread id is minted
+  server-side, handed to the browser and posted back on the next turn — it is the one thing
+  about a thread a caller chooses. It answers **404**, not 403: whether someone else's
+  thread exists is none of the caller's business.
 
 ### `usage` — what each person has cost *(implemented)*
 - PK `user_id`, SK `usage#YYYY-MM`
@@ -142,8 +151,14 @@ one of them is any of the caller's business.
 
 - `media/{media_id}/…` unchanged, and deliberately *not* tenant-prefixed: the content is
   shared, which is the point, and it means one 14 MB video rather than one per user.
-- **Changed:** `lens/{user_id}/{uuid}` for Lens query screenshots, which are per-person and
-  transient. The one-day lifecycle rule carries over.
+- **Done:** `lens/{user_id}/{uuid}` for Lens query screenshots, which are per-person and
+  transient. The one-day lifecycle rule carries over unchanged, since it matches `lens/`.
+  The key travels in the request body, so the prefix is what makes a borrowed one useless:
+  `requireOwnLensKey` refuses a key outside the caller's own partition before the object is
+  read.
+- Searching **from a frame** needs the reel saved, on `/lens/web` as well as `/lens/similar`.
+  `/lens/web` had no caller at all: it would read any frame given `{mediaId, tsMs}` and then
+  describe it, and its two model calls were charged to nobody.
 
 ## Realtime *(implemented)*
 

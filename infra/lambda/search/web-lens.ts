@@ -5,7 +5,9 @@ import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { z } from 'zod';
 import { QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { ddb, TABLES } from '../shared/ddb';
-import { badRequest, handler, parseJsonBody } from '../shared/http';
+import { badRequest, callerId, handler, parseJsonBody } from '../shared/http';
+import { requireOwnLensKey } from '../shared/lens';
+import { hasSaved } from '../shared/saves';
 import { searchWeb, SearchNotConfigured, type WebResult } from './brave';
 import { recordUsage } from '../shared/usage';
 
@@ -56,9 +58,10 @@ const AnswerSchema = z.object({
  * says rather than what the model remembers.
  */
 export const main = handler(async (event) => {
+  const userId = callerId(event);
   const body = parseJsonBody<{ s3Key?: string; mediaId?: string; tsMs?: number }>(event);
 
-  const imageBase64 = await loadImage(body);
+  const imageBase64 = await loadImage(userId, body);
   const apiKey = await loadApiKey();
 
   const extraction = await (await claude()).messages.parse({
@@ -87,7 +90,7 @@ export const main = handler(async (event) => {
     ],
   });
 
-  recordUsage('lens-extract', MODEL_ID, extraction.usage);
+  recordUsage('lens-extract', MODEL_ID, extraction.usage, userId);
 
   const extracted = extraction.parsed_output;
   if (!extracted?.query) throw new Error('could not work out what to search for');
@@ -143,7 +146,7 @@ export const main = handler(async (event) => {
     ],
   });
 
-  recordUsage('lens-summarise', MODEL_ID, answer.usage);
+  recordUsage('lens-summarise', MODEL_ID, answer.usage, userId);
 
   const parsed = answer.parsed_output;
   const allowedUrls = new Set(results.map((result) => result.url));
@@ -181,12 +184,21 @@ async function loadApiKey(): Promise<string> {
   return key;
 }
 
-async function loadImage(body: { s3Key?: string; mediaId?: string; tsMs?: number }): Promise<string> {
+async function loadImage(
+  userId: string,
+  body: { s3Key?: string; mediaId?: string; tsMs?: number },
+): Promise<string> {
   let key: string | undefined = body.s3Key;
 
   if (key) {
-    if (!key.startsWith('lens/')) throw badRequest('s3Key must be a lens upload');
+    requireOwnLensKey(userId, key);
   } else if (body.mediaId && typeof body.tsMs === 'number') {
+    // Searching *from* a frame requires holding the reel it belongs to, the
+    // same rule find-similar applies. Without it, naming any reel would hand
+    // back its picture — and then a description of it.
+    if (!(await hasSaved(userId, body.mediaId))) {
+      throw badRequest(`frame ${body.tsMs}ms of ${body.mediaId} is not in your library`);
+    }
     const frames = await ddb.send(
       new QueryCommand({
         TableName: TABLES.frames,

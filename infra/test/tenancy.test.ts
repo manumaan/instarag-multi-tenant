@@ -248,3 +248,64 @@ test('sync may write its own saves and usage', () => {
   // The media table lost its indexes when the shortcode became its key.
   assert.ok(!/mediaTable\.tableArn\}\/index/.test(connected), 'the media table has no indexes');
 });
+
+test('a thread belongs to one person, by its key', () => {
+  const storage = read('lib/storage.ts');
+  // The owner is the partition, so listing threads cannot name anyone else's.
+  assert.match(
+    storage,
+    /ThreadsTable'[\s\S]{0,200}partitionKey: \{ name: 'user_id'[\s\S]{0,120}sortKey: \{ name: 'id'/,
+  );
+  // The replaced GSI partitioned on a constant, which is both a leak and a hot
+  // key. Ordering is a local index now: same partition, sorted by time.
+  assert.ok(!/entity.*AttributeType/.test(storage), 'no constant-partition index may remain');
+  assert.match(storage, /addLocalSecondaryIndex\(\{[\s\S]{0,120}sortKey: \{ name: 'created_at'/);
+
+  const list = read('lambda/search/list-threads.ts');
+  assert.match(list, /const userId = callerId\(event\)/);
+  assert.match(list, /KeyConditionExpression: 'user_id = :u'/);
+  assert.ok(!/':entity'/.test(list), 'the list must not query a shared partition');
+});
+
+test('a thread id from the request is checked before turns are appended to it', () => {
+  // The messages table is keyed by thread alone and cannot tell whose hand is
+  // on it, so every path into it goes through the owner check first.
+  const threads = read('lambda/shared/threads.ts');
+  assert.match(threads, /Key: \{ user_id: userId, id: threadId \}/);
+  assert.match(threads, /new HttpError\(404, 'thread not found'\)/);
+
+  const ask = read('lambda/search/ask.ts');
+  assert.match(ask, /await requireThread\(userId, threadId\)/);
+  assert.ok(
+    !/body\.threadId \?\? randomUUID\(\)/.test(ask),
+    'a supplied thread id must be checked, not adopted',
+  );
+
+  const get = read('lambda/search/get-thread.ts');
+  assert.match(get, /await requireThread\(userId, threadId\)/);
+});
+
+test('a lens screenshot is the caller\'s own, and a frame must be in their library', () => {
+  const lens = read('lambda/shared/lens.ts');
+  // media/ is shared on purpose; a query screenshot is not content and carries
+  // its owner, so a borrowed key is refused before the object is read.
+  assert.match(lens, /lensPrefixFor = \(userId: string\) => `\$\{LENS_PREFIX\}\$\{userId\}\/`/);
+  assert.match(lens, /if \(!key\.startsWith\(lensPrefixFor\(userId\)\)\) throw badRequest/);
+
+  for (const file of ['lambda/search/lens.ts', 'lambda/search/web-lens.ts']) {
+    const src = read(file);
+    assert.match(src, /requireOwnLensKey\(userId,/, `${file} must check the key's owner`);
+    assert.ok(
+      !/startsWith\('lens\/'\)|startsWith\(LENS_PREFIX\)/.test(src),
+      `${file} accepts any lens key, including someone else's`,
+    );
+    assert.match(src, /hasSaved\(userId, body\.mediaId\)/, `${file} must check the frame is the caller's`);
+  }
+});
+
+test('both Lens model calls are charged to whoever asked', () => {
+  const web = read('lambda/search/web-lens.ts');
+  // It had no caller at all, so its two calls were spent by nobody.
+  assert.match(web, /recordUsage\('lens-extract', MODEL_ID, extraction\.usage, userId\)/);
+  assert.match(web, /recordUsage\('lens-summarise', MODEL_ID, answer\.usage, userId\)/);
+});

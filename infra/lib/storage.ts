@@ -32,15 +32,13 @@ export class Storage extends Construct {
   readonly threadsTable: dynamodb.Table;
   readonly messagesTable: dynamodb.Table;
 
-  /** Constant partition key value for the media recency index. */
-  /** GSI on the media table: newest-first library listing. */
+  /** GSI on the connections table: one person's open sockets. */
   static readonly CONNECTIONS_BY_USER = 'byUser';
   static readonly SAVES_BY_SAVED_AT = 'bySavedAt';
   static readonly SAVES_BY_MEDIA = 'byMedia';
-  /** Sparse GSI: find an already-ingested reel by its permalink. */
   /** GSI on the jobs table: all jobs for one media item. */
   static readonly JOBS_BY_MEDIA = 'byMedia';
-  /** GSI on the threads table: newest-first thread list. */
+  /** LSI on the threads table: one person's threads, newest first. */
   static readonly THREADS_BY_CREATED_AT = 'byCreatedAt';
 
   constructor(scope: Construct, id: string, props: StorageProps) {
@@ -137,27 +135,38 @@ export class Storage extends Construct {
       ...durable,
     });
 
+    /*
+     * A thread is private, so the owner is its partition: listing someone's
+     * threads is a query inside their own partition, and there is no key that
+     * reaches anyone else's.
+     *
+     * That replaces a GSI partitioned on the constant 'thread' — a documented
+     * single-user compromise, and one hot partition the moment there are two
+     * people. Ordering is a *local* secondary index now: same partition, sorted
+     * by time, which is the thing the constant partition was faking.
+     */
     this.threadsTable = new dynamodb.Table(this, 'ThreadsTable', {
-      partitionKey: { name: 'id', type: dynamodb.AttributeType.STRING },
+      partitionKey: { name: 'user_id', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'id', type: dynamodb.AttributeType.STRING },
       ...durable,
     });
-    this.threadsTable.addGlobalSecondaryIndex({
+    // An LSI is created with the table and cannot be added to a live one, so
+    // this is a rebuild rather than an alteration if it ever changes.
+    this.threadsTable.addLocalSecondaryIndex({
       indexName: Storage.THREADS_BY_CREATED_AT,
-      partitionKey: { name: 'entity', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'created_at', type: dynamodb.AttributeType.STRING },
       projectionType: dynamodb.ProjectionType.ALL,
     });
 
-    // created_at as the sort key keeps a thread's turns in order.
+    // created_at as the sort key keeps a thread's turns in order. Keyed by
+    // thread alone: a message is reached only through a thread the caller
+    // owns, which is checked before this table is touched.
     this.messagesTable = new dynamodb.Table(this, 'MessagesTable', {
       partitionKey: { name: 'thread_id', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'created_at', type: dynamodb.AttributeType.STRING },
       ...durable,
     });
 
-    // Sparse: only items with a permalink appear, which is what makes a
-    // re-paste of the same reel cheap to detect without scanning the library.
-    
     this.framesTable = new dynamodb.Table(this, 'FramesTable', {
       partitionKey: { name: 'media_id', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'ts_ms', type: dynamodb.AttributeType.NUMBER },

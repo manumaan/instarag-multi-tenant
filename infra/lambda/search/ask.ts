@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { ddb } from '../shared/ddb';
 import { badRequest, callerId, handler, parseJsonBody } from '../shared/http';
 import { retrieve, warmIndex, type Hit } from './retrieve';
+import { requireThread } from '../shared/threads';
 import { sourcesFor } from './sources';
 import { recordUsage } from '../shared/usage';
 
@@ -106,8 +107,8 @@ export const main = handler(async (event) => {
   const retrieved = new Set(hits.map((hit) => `${hit.mediaId}:${hit.tsMs}`));
   const citations = parsed.citations.filter((c) => retrieved.has(`${c.media_id}:${c.ts_ms}`));
 
-  const threadId = body.threadId ?? randomUUID();
-  await persist(threadId, body.mediaId, question, parsed.answer, citations);
+  const threadId = await continueOrStart(userId, body.threadId);
+  await persist(userId, threadId, body.mediaId, question, parsed.answer, citations);
 
   return {
     threadId,
@@ -121,6 +122,21 @@ export const main = handler(async (event) => {
     outputTokens: response.usage.output_tokens,
   };
 });
+
+/**
+ * A new thread, or a continuation of one the caller owns.
+ *
+ * A thread id is minted here and handed to the browser, which posts it back on
+ * the next turn — so an id arriving in a request is the one thing about a
+ * thread that a caller chooses. Without the check, posting somebody else's id
+ * would append turns to their conversation: the messages table is keyed by
+ * thread alone and cannot tell whose hand is on it.
+ */
+async function continueOrStart(userId: string, threadId: string | undefined): Promise<string> {
+  if (!threadId) return randomUUID();
+  await requireThread(userId, threadId);
+  return threadId;
+}
 
 function formatContext(hits: Hit[]): string {
   return hits
@@ -140,6 +156,7 @@ function formatContext(hits: Hit[]): string {
 }
 
 async function persist(
+  userId: string,
   threadId: string,
   mediaId: string | undefined,
   question: string,
@@ -147,7 +164,7 @@ async function persist(
   citations: Array<{ media_id: string; ts_ms: number }>,
 ) {
   const now = new Date().toISOString();
-  await startThread(threadId, mediaId, question, now);
+  await startThread(userId, threadId, mediaId, question, now);
   await ddb.send(
     new PutCommand({
       TableName: MESSAGES_TABLE,
@@ -170,7 +187,13 @@ async function persist(
 }
 
 /** Creates the thread row the first time a thread is written to. */
-async function startThread(threadId: string, mediaId: string | undefined, question: string, now: string) {
+async function startThread(
+  userId: string,
+  threadId: string,
+  mediaId: string | undefined,
+  question: string,
+  now: string,
+) {
   const existing = await ddb.send(
     new QueryCommand({
       TableName: MESSAGES_TABLE,
@@ -184,8 +207,8 @@ async function startThread(threadId: string, mediaId: string | undefined, questi
     new PutCommand({
       TableName: THREADS_TABLE,
       Item: {
+        user_id: userId,
         id: threadId,
-        entity: 'thread',
         scope: mediaId ? 'media' : 'library',
         media_id: mediaId,
         title: question.slice(0, 120),
@@ -204,12 +227,12 @@ async function startThread(threadId: string, mediaId: string | undefined, questi
  * polls GET /threads/{id} until its status changes.
  */
 async function planAnswer(request: string, body: AskBody, userId: string) {
-  const threadId = body.threadId ?? randomUUID();
+  const threadId = await continueOrStart(userId, body.threadId);
   const now = new Date().toISOString();
   // Microsecond suffix keeps the answer after its question in sort order.
   const assistantAt = `${now}#a`;
 
-  await startTurn(threadId, body.mediaId, request, now, assistantAt);
+  await startTurn(userId, threadId, body.mediaId, request, now, assistantAt);
 
   await lambda.send(
     new InvokeCommand({
@@ -233,13 +256,14 @@ async function planAnswer(request: string, body: AskBody, userId: string) {
 
 /** Writes the question and a placeholder for the answer still being built. */
 async function startTurn(
+  userId: string,
   threadId: string,
   mediaId: string | undefined,
   question: string,
   now: string,
   assistantAt: string,
 ) {
-  await startThread(threadId, mediaId, question, now);
+  await startThread(userId, threadId, mediaId, question, now);
   await ddb.send(
     new PutCommand({
       TableName: MESSAGES_TABLE,
