@@ -33,7 +33,20 @@ export class Search extends Construct {
     super(scope, id);
 
     const stack = Stack.of(this);
-    const name = `reel-lens-${stack.account}`.slice(0, 32);
+    /*
+     * A collection name is unique per account and region, as are the three
+     * policy names derived from it — so a constant is a collision, not a
+     * shared index: a second stack in this account fails on "already exists"
+     * rather than quietly pooling everyone's frames.
+     *
+     * Derived from the stack name for the same reason the Cognito domain is.
+     * Note the collection is *not* the tenant boundary in any case: content is
+     * global within a deployment and `scopeFilter` is what separates people.
+     */
+    // 32 characters is the cap, and the `-grp`/`-enc`/`-net`/`-data` suffixes
+    // have to fit inside it — the account number used to be here and is not
+    // needed, since these names are account-scoped already.
+    const name = stack.stackName.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 27);
 
     /**
      * AWS::OpenSearchServerless::Index is created by CloudFormation itself, so

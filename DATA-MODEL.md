@@ -174,6 +174,40 @@ because an unattributed socket cannot be filtered later and filtering is the who
 `dynamodb:Scan` was also removed from the broadcaster's policy. The old behaviour is now
 unrepresentable rather than merely unwritten, and a test asserts the grant stays gone.
 
+## Deploying beside the MVP
+
+Most of a CDK stack's physical names are scoped to the stack, so a copied repo deploys
+alongside its original without anyone thinking about it. Four names are not, and all four
+arrived here as constants:
+
+- **The stack id.** `ReelLens` in account 250037328911 is not a second stack — it is an
+  update to the live single-user one, whose tables are RETAIN and whose media bucket is
+  versioned. It is `ReelLensMultiTenant` now (`-c stackName=`).
+- **The Cognito hosted-UI domain prefix** is unique across the whole region, so
+  `reel-lens-<account>` fails outright on a second stack. Derived from the stack name.
+- **A Secrets Manager name** is unique per account, so `instarag-claude-key` cannot be
+  created twice. It is `-c claudeSecretName=`, defaulting to `instarag-claude-key-mt` — its
+  own key, which also keeps the two deployments' spend separable on Anthropic's side.
+- **The OpenSearch collection**, and the encryption, network and data-access policy names
+  derived from it. `reel-lens-<account>` is unique per account and region, so a same-account
+  deploy fails on "already exists" — it would not have pooled the two libraries' frames, but
+  it would not have deployed either. Derived from the stack name, with the account dropped
+  (these names are account-scoped already) so the `-grp`/`-enc`/`-net`/`-data` suffixes fit
+  inside the 32-character cap.
+
+**The container image is a non-issue, and deliberately so.** All three pipeline handlers come
+from one `DockerImageAsset`, which CDK pushes to the *bootstrap* repo
+(`cdk-hnb659fds-container-assets-<account>-<region>`) under a tag that is the hash of the
+build context. Two stacks share that repo by design; identical content means one image and
+no duplicate push, and different content means a different tag. This repo's `extract/`
+differs (it adds `src/ledger.ts` and changes `download.ts`), so it gets its own tag. The one
+thing to watch is the **ECR lifecycle policy** applied to that account — keep the three most
+recent images — which counts across every stack pushing into it. Two stacks deploying in
+turn can expire an image the other still references.
+
+What is left before a deploy is the **account**: the same one as the MVP (now safe, but the
+two share a bill and an OpenSearch bootstrap) or a fresh one.
+
 ## What carries over untouched
 
 The pipeline, extraction, the vision pass, the plan builder, Lens, the thumbnailer,

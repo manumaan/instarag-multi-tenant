@@ -125,6 +125,8 @@ export class Api extends Construct {
 
     const completeUpload = makeFn('CompleteUpload', 'complete-upload.ts');
     allow(completeUpload, ['dynamodb:UpdateItem'], [storage.usageTable.tableArn]);
+    // "did this caller start this upload" — the save written when it was created.
+    allow(completeUpload, ['dynamodb:GetItem'], [storage.savesTable.tableArn]);
     allow(completeUpload, ['s3:GetObject'], [mediaObjects]); // HeadObject is authorised as GetObject
     allow(completeUpload, ['dynamodb:GetItem', 'dynamodb:UpdateItem'], [storage.mediaTable.tableArn]);
     // A carousel's completion registers its uploaded slides as frames.

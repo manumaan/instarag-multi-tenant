@@ -4,6 +4,7 @@ import { InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
 import { BatchWriteCommand, GetCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { ddb, TABLES } from '../shared/ddb';
 import { badRequest, handler, notFound, pathParam, callerId } from '../shared/http';
+import { hasSaved } from '../shared/saves';
 import type { MediaRecord } from '../shared/media';
 
 const s3 = new S3Client({});
@@ -24,6 +25,11 @@ const JOB_TTL_SECONDS = 30 * 24 * 60 * 60;
 export const main = handler(async (event) => {
   const userId = callerId(event);
   const id = pathParam(event, 'id');
+
+  // The upload's own record was saved to this caller when it was created, so
+  // an id they have not saved is one they did not start — completing it would
+  // put someone else's pending upload through the pipeline in their name.
+  if (!(await hasSaved(userId, id))) throw notFound('media not found');
 
   const existing = await ddb.send(new GetCommand({ TableName: TABLES.media, Key: { id } }));
   const media = existing.Item as MediaRecord | undefined;

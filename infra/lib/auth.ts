@@ -75,8 +75,17 @@ export class Auth extends Construct {
       refreshTokenValidity: Duration.days(30),
     });
 
+    /*
+     * A Cognito domain prefix is unique across the whole region, so a constant
+     * is a collision as soon as this account runs a second stack — and it runs
+     * the single-user MVP. Deriving it from the stack name keeps two
+     * deployments apart without anyone having to remember to.
+     */
+    const stack = Stack.of(this);
     this.domain = this.userPool.addDomain('HostedUi', {
-      cognitoDomain: { domainPrefix: `reel-lens-${Stack.of(this).account}` },
+      cognitoDomain: {
+        domainPrefix: `${stack.stackName.toLowerCase().replace(/[^a-z0-9]/g, '')}-${stack.account}`,
+      },
     });
   }
 }

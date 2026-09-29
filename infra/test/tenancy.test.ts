@@ -309,3 +309,37 @@ test('both Lens model calls are charged to whoever asked', () => {
   assert.match(web, /recordUsage\('lens-extract', MODEL_ID, extraction\.usage, userId\)/);
   assert.match(web, /recordUsage\('lens-summarise', MODEL_ID, answer\.usage, userId\)/);
 });
+
+test('nothing here can overwrite the single-user stack it was copied from', () => {
+  const bin = read('bin/reel-lens.ts');
+  // Deploying as 'ReelLens' in account 250037328911 would not create a second
+  // stack — it would update the live one and take its tables with it.
+  assert.ok(!/new ReelLensStack\(app, 'ReelLens'/.test(bin), 'the MVP stack name must not be the default');
+  assert.match(bin, /tryGetContext\('stackName'\) \?\? 'ReelLensMultiTenant'/);
+
+  // Two physical names are unique beyond their stack, so a constant is a
+  // collision rather than a merge: the Cognito domain prefix is unique per
+  // region, and a secret name is unique per account.
+  assert.match(read('lib/auth.ts'), /domainPrefix: `\$\{stack\.stackName\.toLowerCase\(\)/);
+  assert.ok(!/'instarag-claude-key'/.test(read('lib/reel-lens-stack.ts')), 'the key name must not be shared');
+  assert.match(bin, /tryGetContext\('claudeSecretName'\) \?\? 'instarag-claude-key-mt'/);
+});
+
+test('an upload can only be completed by whoever started it', () => {
+  const complete = read('lambda/media/complete-upload.ts');
+  // The save is written when the record is created, so an id the caller has
+  // not saved is one they did not start — completing it would put someone
+  // else's pending upload through the pipeline in their name.
+  assert.match(complete, /if \(!\(await hasSaved\(userId, id\)\)\) throw notFound/);
+});
+
+test('the vector collection is this stack\'s, not the MVP\'s', () => {
+  const search = read('lib/search.ts');
+  // A collection name is unique per account and region, as are the encryption,
+  // network and data-access policy names derived from it. A constant is a
+  // collision on deploy, not a shared index.
+  assert.ok(!/`reel-lens-\$\{stack\.account\}`/.test(search), 'the collection name must not be a constant');
+  assert.match(search, /const name = stack\.stackName\.toLowerCase\(\)/);
+  // The suffixes have to fit inside the 32-character cap.
+  assert.match(search, /\.slice\(0, 27\)/);
+});

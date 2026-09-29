@@ -31,6 +31,8 @@ export interface ReelLensStackProps extends StackProps {
   readonly monthlyBudget: number;
   /** Bedrock input tokens per hour that would mean something is looping. */
   readonly hourlyTokenBudget: number;
+  /** Secrets Manager name for the Anthropic API key. Set by hand, so it is a name. */
+  readonly claudeSecretName: string;
 }
 
 /**
@@ -61,10 +63,14 @@ export class ReelLensStack extends Stack {
      * Embeddings stay on Bedrock, since Titan is a Bedrock model.
      *
      * Named rather than generated, because it is set by hand:
-     *   aws secretsmanager put-secret-value --secret-id instarag-claude-key --secret-string <key>
+     *   aws secretsmanager put-secret-value --secret-id <claudeSecretName> --secret-string <key>
+     *
+     * A *fixed* name would collide with the single-user MVP's secret in this
+     * account, so it is configuration. Its own key rather than the MVP's, so
+     * the two deployments' spend is attributable separately on Anthropic's side.
      */
     const claudeKey = new secretsmanager.Secret(this, 'ClaudeApiKey', {
-      secretName: 'instarag-claude-key',
+      secretName: props.claudeSecretName,
       description: 'Anthropic API key for the vision, Ask, plan and Lens passes.',
     });
 

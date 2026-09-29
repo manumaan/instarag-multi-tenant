@@ -78,7 +78,26 @@ const monthlyBudget = Number(app.node.tryGetContext('monthlyBudget') ?? 20);
  */
 const hourlyTokenBudget = Number(app.node.tryGetContext('hourlyTokenBudget') ?? 500_000);
 
-new ReelLensStack(app, 'ReelLens', {
+/**
+ * The stack's own name, and **not** `ReelLens`.
+ *
+ * This repo deploys beside the single-user MVP, which owns that name in account
+ * 250037328911: deploying as `ReelLens` would not create a second stack, it
+ * would update the live one and take its tables with it. Override with
+ * `-c stackName=` when deploying somewhere the collision cannot happen.
+ */
+const stackName = app.node.tryGetContext('stackName') ?? 'ReelLensMultiTenant';
+
+/**
+ * Anthropic API key, set by hand after the first deploy:
+ *   aws secretsmanager put-secret-value --secret-id <name> --secret-string <key>
+ * A name rather than a generated id because a person types it. Distinct from
+ * the MVP's `instarag-claude-key`, which a same-account deploy would collide
+ * with, and which would also merge the two deployments' spend.
+ */
+const claudeSecretName = app.node.tryGetContext('claudeSecretName') ?? 'instarag-claude-key-mt';
+
+new ReelLensStack(app, stackName, {
   env: { account: process.env.CDK_DEFAULT_ACCOUNT, region: process.env.CDK_DEFAULT_REGION ?? 'us-east-1' },
   webOrigins,
   retainData,
@@ -93,5 +112,6 @@ new ReelLensStack(app, 'ReelLens', {
   alarmEmail,
   monthlyBudget,
   hourlyTokenBudget,
+  claudeSecretName,
   description: 'Reel Lens - Instagram reel/post analysis',
 });

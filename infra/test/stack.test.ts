@@ -58,6 +58,7 @@ function synth(overrides: { retainData?: boolean } = {}) {
     analysisModel: 'claude-opus-5',
     answerModel: 'claude-sonnet-5',
     expansionModel: 'claude-haiku-4-5',
+    claudeSecretName: 'test-claude-key',
     maxFrames: 20,
     embeddingModel: 'amazon.titan-embed-image-v1',
     maxOcu: 2,
@@ -548,11 +549,13 @@ test('the Instagram token is held under a customer-managed key', () => {
 test('the Claude API key has the name it is set by', () => {
   const template = synth();
   const named = Object.values(template.findResources('AWS::SecretsManager::Secret')).filter(
-    (secret) => secret.Properties.Name === 'instarag-claude-key',
+    (secret) => secret.Properties.Name === 'test-claude-key',
   );
-  // Set out of band by `put-secret-value --secret-id instarag-claude-key`, so a
-  // generated name would break the one documented way to populate it.
-  assert.equal(named.length, 1, 'the Claude key must keep its fixed name');
+  // Set out of band by `put-secret-value --secret-id <name>`, so a generated
+  // name would break the one documented way to populate it. The name is
+  // configuration rather than a constant because a secret name is unique per
+  // account, and the single-user MVP already holds `instarag-claude-key`.
+  assert.equal(named.length, 1, 'the Claude key must be named, not generated');
   assert.ok(!('SecretString' in named[0].Properties));
 });
 
