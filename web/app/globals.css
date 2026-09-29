@@ -278,6 +278,25 @@ pre {
 .plan-items p { margin: 0; max-width: 72ch; }
 .plan-items .cites { display: flex; flex-wrap: wrap; gap: 6px; }
 
+/* The keyframe a tip was read from, beside it; it opens that moment. */
+.plan-items li.with-picture {
+  display: grid; grid-template-columns: 72px 1fr; column-gap: 14px; row-gap: 6px; align-items: start;
+}
+.plan-items li.with-picture > .item-picture { grid-row: span 2; }
+.item-picture, .cite-picture {
+  padding: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+  background: var(--surface-2); cursor: pointer;
+}
+.item-picture { width: 72px; height: 96px; }
+.item-picture.empty { cursor: default; }
+.item-picture img, .cite-picture img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.item-picture:hover, .cite-picture:hover { border-color: var(--accent); }
+.plan-subtitle { margin: -6px 0 0; color: var(--accent); font-size: 13px; }
+
+/* An answer's cited moments, as the frames themselves. */
+.cite-pictures { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; margin: 4px 0 8px; }
+.cite-picture { width: 84px; height: 112px; flex: none; }
+
 /*
  * The citation mark. Thirty of these sit under the advice, so they are a glyph
  * with the clip and moment in the title rather than a line of text each.

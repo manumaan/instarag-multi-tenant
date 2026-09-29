@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Monochrome (themed) icon: only the alpha is used: launchers mask to a circle or squircle, so the mark stays inside the central 66% safe zone. -->
+  <g transform="translate(512 512) scale(0.56) translate(-514 -514)"><circle cx="460" cy="460" r="230" fill="none" stroke="#000000" stroke-width="72"/><circle cx="460" cy="460" r="86" fill="#000000"/><line x1="652" y1="652" x2="790" y2="790" stroke="#000000" stroke-width="92" stroke-linecap="round"/></g>
+</svg>

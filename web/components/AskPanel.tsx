@@ -1,7 +1,10 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import CiteIcon from '@/components/CiteIcon';
+import { frameKey, framePictures } from '@/lib/frames';
+import { sharePlanPdf } from '@/lib/pdf';
 import {
   ask,
   getThread,
@@ -28,6 +31,8 @@ interface Turn {
   sources?: Source[];
   unsupported?: boolean;
   error?: string;
+  /** frameKey → keyframe URL for every cited moment, once fetched. */
+  pictures?: Map<string, string>;
 }
 
 /** A plan takes about a minute; give up well after that rather than forever. */
@@ -61,6 +66,9 @@ export default function AskPanel({
   const [threadId, setThreadId] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState<number | undefined>();
+  const [sharing, setSharing] = useState<number | undefined>();
+  const [shareNote, setShareNote] = useState<{ index: number; text: string } | undefined>();
+  const router = useRouter();
 
   const live = useRef(true);
   useEffect(() => () => void (live.current = false), []);
@@ -89,8 +97,28 @@ export default function AskPanel({
   const update = (patch: Partial<Turn>) =>
     setTurns((prev) => prev.map((turn, i) => (i === prev.length - 1 ? { ...turn, ...patch } : turn)));
 
+  /**
+   * Pictures arrive after the text, so a turn is addressed by its index, not
+   * as "the last one" — another question may have been asked by then.
+   */
+  const withPictures = (index: number, citations: Citation[]) => {
+    if (citations.length === 0) return;
+    void framePictures(citations).then((pictures) => {
+      if (live.current) setTurns((prev) => prev.map((turn, i) => (i === index ? { ...turn, pictures } : turn)));
+    });
+  };
+
+  /**
+   * A picture opens its moment: the reel screen seeks its own player, and the
+   * library view goes to the reel at that point.
+   */
+  const openCitation = (citation: Citation) => {
+    if (onCite) onCite(citation);
+    else router.push(`/media?id=${encodeURIComponent(citation.media_id)}&t=${citation.ts_ms}`);
+  };
+
   /** The plan lands on the thread's assistant message, so watch that. */
-  async function waitForPlan(id: string, messageAt: string) {
+  async function waitForPlan(id: string, messageAt: string, index: number) {
     for (let attempt = 0; attempt < POLL_LIMIT; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, POLL_MS));
       if (!live.current) return;
@@ -108,6 +136,7 @@ export default function AskPanel({
         sources: message.sources,
         unsupported: message.status === 'unsupported',
       });
+      withPictures(index, message.plan?.sections.flatMap((s) => s.items.flatMap((item) => item.citations)) ?? []);
       return;
     }
     update({ building: false, error: 'the plan is taking longer than expected — try again' });
@@ -119,6 +148,7 @@ export default function AskPanel({
     if (!asked || busy) return;
 
     const asking = mode;
+    const index = turns.length;
     setQuestion('');
     setForcedMode(undefined);
     setBusy(true);
@@ -128,11 +158,12 @@ export default function AskPanel({
       if (asking === 'plan') {
         const started = await startPlan(asked, { mediaId, threadId });
         setThreadId(started.threadId);
-        await waitForPlan(started.threadId, started.messageAt);
+        await waitForPlan(started.threadId, started.messageAt, index);
       } else {
         const answer = await ask(asked, { mediaId, threadId });
         setThreadId(answer.threadId ?? undefined);
         update({ answer });
+        withPictures(index, answer.citations);
       }
     } catch (err) {
       update({ building: false, error: err instanceof Error ? err.message : 'the question failed' });
@@ -187,6 +218,35 @@ export default function AskPanel({
     }
   }
 
+  /** Builds the PDF and hands it to the system share sheet, or downloads it. */
+  async function sharePlan(turn: Turn, index: number) {
+    if (!turn.plan || sharing !== undefined) return;
+    setSharing(index);
+    setShareNote(undefined);
+    try {
+      const how = await sharePlanPdf(turn.plan, turn.sources ?? [], turn.pictures ?? new Map());
+      if (how === 'downloaded') setShareNote({ index, text: 'Downloaded — attach it to a message to send it.' });
+    } catch (err) {
+      setShareNote({ index, text: err instanceof Error ? `Could not make the PDF: ${err.message}` : 'Could not make the PDF.' });
+    } finally {
+      if (live.current) setSharing(undefined);
+    }
+  }
+
+  /** The keyframe a citation points at, as a button that opens that moment. */
+  const picture = (citation: Citation | undefined, turn: Turn, className: string) => {
+    if (!citation) return <span className={`${className} empty`} />;
+    const url = turn.pictures?.get(frameKey(citation));
+    const source = turn.sources?.find((s) => s.media_id === citation.media_id) ??
+      turn.answer?.sources?.find((s) => s.media_id === citation.media_id);
+    const text = label ? label(citation) : sourceLabel(source, citation.ts_ms);
+    return (
+      <button type="button" className={className} title={text} aria-label={`Open ${text}`} onClick={() => openCitation(citation)}>
+        {url ? <img src={url} alt="" loading="lazy" /> : null}
+      </button>
+    );
+  };
+
   /**
    * A citation is a mark, not a sentence. Thirty tips each naming their clip and
    * timestamp in full buried the advice under its own provenance, so the label
@@ -233,6 +293,15 @@ export default function AskPanel({
             {turn.answer && (
               <>
                 <p className={turn.answer.answered ? undefined : 'muted'}>{turn.answer.answer}</p>
+                {turn.pictures && turn.answer.citations.length > 0 && (
+                  <div className="cite-pictures">
+                    {turn.answer.citations
+                      .filter((c, j, all) => all.findIndex((d) => frameKey(d) === frameKey(c)) === j)
+                      .map((citation) => (
+                        <span key={frameKey(citation)}>{picture(citation, turn, 'cite-picture')}</span>
+                      ))}
+                  </div>
+                )}
                 {turn.answer.citations.length > 0 && (
                   <div className="citations">
                     {turn.answer.citations.map((citation, j) =>
@@ -250,6 +319,7 @@ export default function AskPanel({
               <article className="plan">
                 <header className="plan-head">
                   <h3>{turn.plan.title}</h3>
+                  <p className="plan-subtitle">Curated by Reel Lens app</p>
                   <p className="plan-lede">{turn.plan.overview}</p>
 
                   {turn.plan.sections.length > 0 && (
@@ -271,8 +341,16 @@ export default function AskPanel({
                       <button className="btn small" onClick={() => copyPlan(turn.plan!, i)}>
                         {copied === i ? 'Copied' : 'Copy'}
                       </button>
+                      <button
+                        className="btn small primary"
+                        onClick={() => void sharePlan(turn, i)}
+                        disabled={sharing !== undefined}
+                      >
+                        {sharing === i ? 'Preparing…' : 'Share PDF'}
+                      </button>
                     </div>
                   )}
+                  {shareNote?.index === i && <p className="muted small">{shareNote.text}</p>}
                 </header>
 
                 {turn.plan.sections.map((section, s) => (
@@ -283,7 +361,8 @@ export default function AskPanel({
                     </h4>
                     <ul className="plan-items">
                       {section.items.map((item, k) => (
-                        <li key={k}>
+                        <li key={k} className="with-picture">
+                          {picture(item.citations[0], turn, 'item-picture')}
                           <p>{item.text}</p>
                           <span className="cites">
                             {item.citations.map((citation, j) => citationChip(citation, turn.sources, j))}
