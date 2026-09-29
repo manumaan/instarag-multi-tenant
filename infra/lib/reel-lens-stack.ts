@@ -48,7 +48,17 @@ export class ReelLensStack extends Stack {
     // both need the CloudFront domain, and nothing flows the other way, so
     // there is no cycle.
     const hosting = new Hosting(this, 'Hosting');
-    const webOrigins = [...props.webOrigins, hosting.origin];
+    /*
+     * The distribution's own origin is appended here rather than passed in:
+     * it does not exist until this stack does, so `-c webOrigins=` is for the
+     * *other* origins (localhost, a custom domain).
+     *
+     * Deduplicated because passing the CloudFront URL anyway is the obvious
+     * thing to try, and S3 rejects a CORS rule with a repeated origin —
+     * "array items are not unique", at changeset validation, after the assets
+     * have been built and published.
+     */
+    const webOrigins = [...new Set([...props.webOrigins, hosting.origin])];
 
     const storage = new Storage(this, 'Storage', {
       webOrigins,

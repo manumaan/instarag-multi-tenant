@@ -359,3 +359,11 @@ test('the helper scripts point at this stack, not the live MVP one', () => {
     assert.match(src, /ReelLensMultiTenant/, `${script} must name this repo's stack`);
   }
 });
+
+test('passing the site origin does not duplicate it into the CORS rule', () => {
+  const stack = read('lib/reel-lens-stack.ts');
+  // The distribution's origin is appended by the stack, so passing it as well
+  // is the obvious thing to try — and S3 rejects a repeated origin at
+  // changeset validation, after every asset has been built and published.
+  assert.match(stack, /new Set\(\[\.\.\.props\.webOrigins, hosting\.origin\]\)/);
+});
