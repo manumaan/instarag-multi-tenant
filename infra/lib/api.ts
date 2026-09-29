@@ -139,14 +139,11 @@ export class Api extends Construct {
     allow(createFromUrl, ['dynamodb:UpdateItem'], [storage.usageTable.tableArn]);
     // saves: writes a save, and reuses content anyone already ingested.
     allow(createFromUrl, ['dynamodb:PutItem'], [storage.savesTable.tableArn]);
-    allow(createFromUrl, ['dynamodb:PutItem'], [storage.mediaTable.tableArn]);
     // Re-pasting a reel we already hold must not spend Instagram's anonymous
-    // rate-limit budget on a second download.
-    allow(
-      createFromUrl,
-      ['dynamodb:Query'],
-      [storage.mediaTable.tableArn],
-    );
+    // rate-limit budget on a second download. The shortcode is the key, so the
+    // dedupe is a GetItem — this used to grant Query, left over from when it
+    // was a lookup by permalink, and every paste failed AccessDenied.
+    allow(createFromUrl, ['dynamodb:GetItem', 'dynamodb:PutItem'], [storage.mediaTable.tableArn]);
     this.createFromUrlFunction = createFromUrl;
 
     const listMedia = makeFn('ListMedia', 'list-media.ts');
