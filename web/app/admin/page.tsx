@@ -37,6 +37,7 @@ export default function AdminPage() {
   const [accounts, setAccounts] = useState<AccountUsage[]>([]);
   const [period, setPeriod] = useState('');
   const [email, setEmail] = useState('');
+  const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [sent, setSent] = useState<string>();
@@ -70,8 +71,9 @@ export default function AdminPage() {
     setError(undefined);
     setSent(undefined);
     try {
-      await sendInvite(address);
+      await sendInvite(address, name.trim() || undefined);
       setEmail('');
+      setName('');
       setSent(address);
       await refresh();
     } catch (err) {
@@ -126,6 +128,13 @@ export default function AdminPage() {
         </p>
         <form className="url-form" onSubmit={invite}>
           <input
+            type="text"
+            placeholder="Name (optional)"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            disabled={busy}
+          />
+          <input
             type="email"
             placeholder="name@example.com"
             value={email}
@@ -157,7 +166,10 @@ export default function AdminPage() {
             <tbody>
               {invites.map((row) => (
                 <tr key={row.email}>
-                  <td>{row.email}</td>
+                  <td>
+                    {row.name && <div>{row.name}</div>}
+                    <span className={row.name ? 'muted small' : undefined}>{row.email}</span>
+                  </td>
                   <td>
                     <span className={`chip ${row.status === 'CONFIRMED' ? 'chip-ready' : ''}`}>
                       {STATUS_LABEL[row.status] ?? row.status}

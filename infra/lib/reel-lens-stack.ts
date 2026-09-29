@@ -84,7 +84,7 @@ export class ReelLensStack extends Stack {
       description: 'Anthropic API key for the vision, Ask, plan and Lens passes.',
     });
 
-    const auth = new Auth(this, 'Auth', { webOrigins });
+    const auth = new Auth(this, 'Auth', { webOrigins, siteUrl: hosting.origin });
 
     const search = new Search(this, 'Search', { maxOcu: props.maxOcu });
 

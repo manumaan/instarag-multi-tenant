@@ -254,6 +254,7 @@ export const warmSearch = () =>
 
 export interface Invite {
   email: string;
+  name?: string;
   invited_by: string;
   created_at: string;
   /** From Cognito, not from the row: FORCE_CHANGE_PASSWORD, CONFIRMED, REVOKED. */
@@ -287,11 +288,11 @@ export async function isAdmin(): Promise<boolean> {
 
 export const listInvites = () => call<{ invites: Invite[] }>('/admin/invites');
 
-export const sendInvite = (email: string) =>
+export const sendInvite = (email: string, name?: string) =>
   call<{ invite: Invite }>('/admin/invites', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ email, name }),
   });
 
 export const revokeInvite = (email: string) =>

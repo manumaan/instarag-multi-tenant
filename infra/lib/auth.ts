@@ -1,10 +1,16 @@
 import { Construct } from 'constructs';
 import { Duration, RemovalPolicy, Stack } from 'aws-cdk-lib';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
+import * as lambda from 'aws-cdk-lib/aws-lambda';
+import { NodejsFunction, OutputFormat } from 'aws-cdk-lib/aws-lambda-nodejs';
+import * as logs from 'aws-cdk-lib/aws-logs';
+import * as path from 'node:path';
 
 export interface AuthProps {
   /** Hosted UI redirect targets, e.g. http://localhost:3000/ */
   readonly webOrigins: string[];
+  /** The site's own URL, linked from the invite email. */
+  readonly siteUrl: string;
 }
 
 /**
@@ -44,6 +50,25 @@ export class Auth extends Construct {
       accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
       removalPolicy: RemovalPolicy.DESTROY,
     });
+
+    /*
+     * The invite email. The pool's own template can substitute only the
+     * username and the temporary password, so it cannot greet anyone by name or
+     * link to the site; a CustomMessage trigger can. It needs no permissions:
+     * Cognito passes it everything and fills the password in afterwards.
+     */
+    const inviteMessage = new NodejsFunction(this, 'InviteMessage', {
+      entry: path.join(__dirname, '..', 'lambda', 'auth', 'invite-message.ts'),
+      handler: 'main',
+      runtime: lambda.Runtime.NODEJS_22_X,
+      architecture: lambda.Architecture.ARM_64,
+      memorySize: 128,
+      timeout: Duration.seconds(5),
+      environment: { SITE_URL: props.siteUrl },
+      logGroup: new logs.LogGroup(this, 'InviteMessageLogs', { retention: logs.RetentionDays.TWO_WEEKS }),
+      bundling: { minify: true, format: OutputFormat.CJS, target: 'node22' },
+    });
+    this.userPool.addTrigger(cognito.UserPoolOperation.CUSTOM_MESSAGE, inviteMessage);
 
     /*
      * Admin is a group, so the check is on a token claim rather than on an

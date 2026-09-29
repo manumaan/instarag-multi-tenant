@@ -34,9 +34,12 @@ const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/;
 /** POST /admin/invites — create the account and let Cognito send the email. */
 export const create = handler(async (event) => {
   const invitedBy = requireAdmin(event);
-  const { email } = parseJsonBody<{ email?: string }>(event);
+  const { email, name } = parseJsonBody<{ email?: string; name?: string }>(event);
   const address = email?.trim().toLowerCase();
   if (!address || !EMAIL.test(address)) throw badRequest('a valid email address is required');
+  // Optional: it is only the greeting in the invite email. Cognito caps a
+  // standard attribute at 2048 characters; a name needs nowhere near that.
+  const displayName = name?.trim().slice(0, 100) || undefined;
 
   /*
    * Cognito is the source of truth for whether an account exists, so it is
@@ -53,6 +56,9 @@ export const create = handler(async (event) => {
           // Pre-verified: the invite email proves the address, and leaving it
           // unverified would block the password reset flow they may need.
           { Name: 'email_verified', Value: 'true' },
+          // A standard attribute, so it needs no schema change on the pool.
+          // The invite-message trigger reads it to greet them by name.
+          ...(displayName ? [{ Name: 'name', Value: displayName }] : []),
         ],
         DesiredDeliveryMediums: ['EMAIL'],
       }),
@@ -67,6 +73,7 @@ export const create = handler(async (event) => {
   const now = new Date();
   const invite = {
     email: address,
+    ...(displayName ? { name: displayName } : {}),
     invited_by: invitedBy,
     created_at: now.toISOString(),
     expires_at: Math.floor(now.getTime() / 1000) + INVITE_TTL_DAYS * 86400,
