@@ -201,12 +201,16 @@ from one `DockerImageAsset`, which CDK pushes to the *bootstrap* repo
 build context. Two stacks share that repo by design; identical content means one image and
 no duplicate push, and different content means a different tag. This repo's `extract/`
 differs (it adds `src/ledger.ts` and changes `download.ts`), so it gets its own tag. The one
-thing to watch is the **ECR lifecycle policy** applied to that account — keep the three most
-recent images — which counts across every stack pushing into it. Two stacks deploying in
-turn can expire an image the other still references.
+thing to watch was the **ECR lifecycle policy** on that account, which counts across every
+stack pushing into the repo: at keep-three, two stacks deploying in turn could expire an
+image the other still references. **Raised to five on 2026-09-29**, previewed first —
+`start-lifecycle-policy-preview` reported `expiringImageTotalCount: 0`, since only three
+images remain.
 
-What is left before a deploy is the **account**: the same one as the MVP (now safe, but the
-two share a bill and an OpenSearch bootstrap) or a fresh one.
+**The account is the MVP's** (250037328911, us-east-1), decided 2026-09-29. The two stacks
+share a bill, the CDK bootstrap and that image repo; nothing else, now that the four
+account-scoped names above are derived from the stack name. `cdk ls` answers
+`ReelLensMultiTenant`, and the live stack is `ReelLens`.
 
 ## What carries over untouched
 

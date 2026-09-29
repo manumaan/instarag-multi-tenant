@@ -111,7 +111,7 @@ Setting it up needs a Meta app, which only you can create:
 ```bash
 cd infra && npm run deploy -- -c instagramAppId=YOUR_APP_ID
 aws secretsmanager put-secret-value \
-  --secret-id "$(aws cloudformation describe-stacks --stack-name ReelLens \
+  --secret-id "$(aws cloudformation describe-stacks --stack-name ReelLensMultiTenant \
     --query "Stacks[0].Outputs[?contains(OutputKey,'AppSecretArn')].OutputValue" --output text)" \
   --secret-string 'YOUR_APP_SECRET'
 ```
@@ -290,7 +290,7 @@ brave.com/search/api, then put it into the secret the stack created:
 
 ```bash
 aws secretsmanager put-secret-value \
-  --secret-id "$(aws cloudformation describe-stacks --stack-name ReelLens \
+  --secret-id "$(aws cloudformation describe-stacks --stack-name ReelLensMultiTenant \
     --query "Stacks[0].Outputs[?OutputKey=='WebSearchSecretArn'].OutputValue" --output text)" \
   --secret-string 'YOUR_BRAVE_API_KEY'
 ```
@@ -379,7 +379,7 @@ Seven, on one SNS topic. No email address is baked into the repo, so the topic s
 no subscriber — either deploy with `-c alarmEmail=you@example.com`, or subscribe afterwards:
 
 ```bash
-aws sns subscribe --topic-arn "$(aws cloudformation describe-stacks --stack-name ReelLens \
+aws sns subscribe --topic-arn "$(aws cloudformation describe-stacks --stack-name ReelLensMultiTenant \
   --query "Stacks[0].Outputs[?OutputKey=='AlarmTopicArn'].OutputValue" --output text)" \
   --protocol email --notification-endpoint you@example.com
 ```
@@ -462,5 +462,5 @@ handshake cannot carry an authorization header.
 ## Teardown
 
 ```bash
-cd infra && npx cdk destroy ReelLens
+cd infra && npx cdk destroy ReelLensMultiTenant
 ```

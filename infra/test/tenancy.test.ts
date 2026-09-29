@@ -343,3 +343,19 @@ test('the vector collection is this stack\'s, not the MVP\'s', () => {
   // The suffixes have to fit inside the 32-character cap.
   assert.match(search, /\.slice\(0, 27\)/);
 });
+
+test('the helper scripts point at this stack, not the live MVP one', () => {
+  // Both stacks share an account. `write-web-env.sh` defaulting to ReelLens
+  // would build this frontend against the MVP's API and user pool, and the
+  // smoke tests would write into it — pipeline-smoke fails a reel on purpose.
+  for (const script of [
+    '../scripts/smoke.sh',
+    '../scripts/write-web-env.sh',
+    '../scripts/pipeline-smoke.sh',
+    '../scripts/deploy-web.sh',
+  ]) {
+    const src = read(script);
+    assert.ok(!/STACK:-ReelLens\}/.test(src), `${script} defaults to the MVP stack`);
+    assert.match(src, /ReelLensMultiTenant/, `${script} must name this repo's stack`);
+  }
+});

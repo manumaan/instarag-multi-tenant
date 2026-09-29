@@ -9,7 +9,10 @@
 # Bedrock.
 set -euo pipefail
 
-STACK="${STACK:-ReelLens}"
+# Defaults to this repo's stack, not the MVP's: `ReelLens` is the live
+# single-user deployment in the same account, and pointing these at it would
+# read its outputs — or, for the smoke tests, write into it.
+STACK="${STACK:-ReelLensMultiTenant}"
 export AWS_REGION="${AWS_REGION:-us-east-1}"
 SMOKE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TMP="$(mktemp -d)"

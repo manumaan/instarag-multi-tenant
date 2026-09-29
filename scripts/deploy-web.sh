@@ -22,7 +22,7 @@ npm --prefix "$ROOT/infra" run deploy -- --require-approval never "$@"
 # CDK suffixes output keys with a hash, so match on the stem rather than the
 # whole key. The exact-match version printed nothing: a jmespath query that
 # matches no output still exits 0, so the `||` fallback never ran.
-SITE=$(aws cloudformation describe-stacks --stack-name "${STACK:-ReelLens}" \
+SITE=$(aws cloudformation describe-stacks --stack-name "${STACK:-ReelLensMultiTenant}" \
   --query "Stacks[0].Outputs[?contains(OutputKey,'SiteUrl')].OutputValue" --output text)
 echo
 echo "live at: $SITE"
