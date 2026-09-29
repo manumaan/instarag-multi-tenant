@@ -32,8 +32,10 @@ function Routes() {
         user is in. So signing in never loses the reel they were sharing.
       */}
       <Stack.Protected guard={signedIn}>
-        <Stack.Screen name="index" options={{ title: 'Reel Lens' }} />
+        {/* The tabs draw their own headers. */}
+        <Stack.Screen name="(tabs)" options={{ headerShown: false, title: 'Reel Lens' }} />
         <Stack.Screen name="media/[id]" options={{ title: '' }} />
+        <Stack.Screen name="thread/[id]" options={{ title: 'Ask' }} />
         <Stack.Screen name="share" options={{ title: 'Adding reel', presentation: 'modal' }} />
       </Stack.Protected>
       <Stack.Protected guard={!signedIn}>

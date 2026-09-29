@@ -44,7 +44,8 @@
       "expo-video",
       "expo-image",
       "expo-status-bar",
-      "./plugins/with-scene-lifecycle"
+      "./plugins/with-scene-lifecycle",
+      "expo-font"
     ]
   }
 }

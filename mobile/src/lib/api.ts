@@ -77,12 +77,69 @@ export interface Citation {
   ts_ms: number;
 }
 
+/** A clip a citation points at, so a citation can say whose it was. */
+export interface Source {
+  media_id: string;
+  type?: Media['type'];
+  uploader?: string;
+  caption?: string;
+  slide_count?: number;
+}
+
 export interface AskAnswer {
   threadId: string | null;
   /** false when the indexed moments did not support an answer. */
   answered: boolean;
   answer: string;
   citations: Citation[];
+  sources?: Source[];
+}
+
+export interface PlanItem {
+  text: string;
+  citations: Citation[];
+}
+
+export interface Plan {
+  title: string;
+  overview: string;
+  sections: Array<{ heading: string; items: PlanItem[] }>;
+  /** What was asked for that the clips do not cover. */
+  gaps: string[];
+}
+
+/**
+ * A plan is not returned by the request that asks for it: building one takes
+ * about a minute and the API cuts a request off at thirty seconds. The thread
+ * comes back at once and the plan lands on its assistant message.
+ */
+export interface PlanStarted {
+  threadId: string;
+  mode: 'plan';
+  status: 'working';
+  messageAt: string;
+}
+
+export interface ThreadMessage {
+  thread_id: string;
+  created_at: string;
+  role: 'user' | 'assistant';
+  content: string;
+  citations?: Citation[];
+  mode?: 'answer' | 'plan';
+  /** Plans only: 'working' until the worker fills the message in. */
+  status?: 'working' | 'ready' | 'unsupported' | 'failed';
+  plan?: Plan;
+  sources?: Source[];
+  error?: string;
+}
+
+export interface Thread {
+  id: string;
+  scope: 'media' | 'library';
+  media_id?: string;
+  title: string;
+  created_at: string;
 }
 
 /** ts_ms encodes the slide number for a carousel, 1000ms per slide. */
@@ -140,6 +197,39 @@ export const retryMedia = (id: string) =>
 
 export const ask = (question: string, options: { mediaId?: string; threadId?: string | null } = {}) =>
   call<AskAnswer>('/ask', json({ question, mediaId: options.mediaId, threadId: options.threadId ?? undefined }));
+
+/** Start a plan built from the whole library. Returns as soon as it is queued. */
+export const startPlan = (request: string, options: { threadId?: string | null } = {}) =>
+  call<PlanStarted>('/ask', json({ question: request, mode: 'plan', threadId: options.threadId ?? undefined }));
+
+export const getThread = (id: string) =>
+  call<{ threadId: string; messages: ThreadMessage[] }>(`/threads/${encodeURIComponent(id)}`);
+
+export const listThreads = () => call<{ items: Thread[] }>('/threads');
+
+/**
+ * Whether a line asks for something built rather than a fact looked up. The
+ * same local guess as the web (web/lib/api.ts): instant, free, and shown to the
+ * user with one tap to switch, so a wrong guess costs nothing.
+ */
+const BUILD_VERBS = /^(create|make|build|write|draft|plan|give me|put together|assemble|compile)\b/i;
+const BUILD_NOUNS = /\b(itinerary|travel plan|trip plan|guide|checklist|packing list|shortlist|summary of everything|all the tips|all tips)\b/i;
+
+export function looksLikePlan(text: string): boolean {
+  const trimmed = text.trim();
+  if (BUILD_VERBS.test(trimmed) || BUILD_NOUNS.test(trimmed)) return true;
+  return /\b(all|every) (my |the )?(clips|reels|videos|saves)\b/i.test(trimmed);
+}
+
+/** A creator's name without the self-description Instagram handles carry. */
+export const creatorName = (uploader?: string) => uploader?.split(/[|·•]/)[0].trim() || undefined;
+
+/** "Elvira · 3.2s" — whose clip, and where in it. */
+export function sourceLabel(source: Source | undefined, tsMs: number): string {
+  const moment = momentLabel({ type: source?.type ?? 'reel', slide_count: source?.slide_count }, tsMs);
+  const who = creatorName(source?.uploader);
+  return who ? `${who} · ${moment}` : moment;
+}
 
 /**
  * Wakes the search index while the question is being typed: the collection

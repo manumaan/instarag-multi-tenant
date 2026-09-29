@@ -1,16 +1,14 @@
 import { Image } from 'expo-image';
-import { router, Stack, useFocusEffect } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { useShareIntentContext } from 'expo-share-intent';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { FlatList, Pressable, RefreshControl, Text, TextInput, View } from 'react-native';
-import { Button, StatusChip, isWorking, useTheme } from '../components/ui';
-import { addFromUrl, findInstagramUrl, listMedia, type Media } from '../lib/api';
-import { useAuth } from '../lib/auth';
-import { subscribeToMedia } from '../lib/ws';
+import { Button, StatusChip, isWorking, useTheme } from '../../components/ui';
+import { addFromUrl, findInstagramUrl, listMedia, type Media } from '../../lib/api';
+import { subscribeToMedia } from '../../lib/ws';
 
 export default function Library() {
   const { hasShareIntent } = useShareIntentContext();
-  const { signOut } = useAuth();
   const t = useTheme();
 
   const [items, setItems] = useState<Media[]>([]);
@@ -99,15 +97,6 @@ export default function Library() {
 
   return (
     <>
-      <Stack.Screen
-        options={{
-          headerRight: () => (
-            <Pressable onPress={() => void signOut()} hitSlop={8}>
-              <Text style={{ color: t.accent, fontSize: 15 }}>Sign out</Text>
-            </Pressable>
-          ),
-        }}
-      />
       <FlatList
         data={items}
         keyExtractor={(m) => m.id}

@@ -33,7 +33,10 @@ import { subscribeToMedia } from '../../lib/ws';
 const POLL_MS = 10_000;
 
 export default function ReelDetail() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  // `t` is a cited moment (ms) to open at — from a plan tip or an answer's picture.
+  const { id, t: startParam } = useLocalSearchParams<{ id: string; t?: string }>();
+  const startAtMs = startParam !== undefined && Number.isFinite(Number(startParam)) ? Number(startParam) : undefined;
+  const startApplied = useRef(false);
   const t = useTheme();
   const [detail, setDetail] = useState<MediaDetail>();
   const [error, setError] = useState<string>();
@@ -78,7 +81,14 @@ export default function ReelDetail() {
   const player = useVideoPlayer(null);
   const playbackUrl = detail?.playbackUrl;
   useEffect(() => {
-    if (playbackUrl) void player.replaceAsync(playbackUrl);
+    if (!playbackUrl) return;
+    void player.replaceAsync(playbackUrl).then(() => {
+      // Seek only once the source is in: a seek before that is dropped.
+      if (startAtMs !== undefined && !startApplied.current) {
+        startApplied.current = true;
+        player.currentTime = startAtMs / 1000;
+      }
+    });
   }, [player, playbackUrl]);
 
   const media = detail?.media;
@@ -98,6 +108,14 @@ export default function ReelDetail() {
     },
     [slideshow, detail?.frames, player],
   );
+
+  // A carousel has no player: turn to the cited slide once the slides render.
+  useEffect(() => {
+    if (!slideshow || startAtMs === undefined || startApplied.current || !detail?.frames.length) return;
+    startApplied.current = true;
+    const timer = setTimeout(() => seek(startAtMs), 300);
+    return () => clearTimeout(timer);
+  }, [slideshow, startAtMs, detail?.frames.length, seek]);
 
   if (!detail || !media) {
     return (
