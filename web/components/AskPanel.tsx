@@ -224,8 +224,12 @@ export default function AskPanel({
     setSharing(index);
     setShareNote(undefined);
     try {
-      const how = await sharePlanPdf(turn.plan, turn.sources ?? [], turn.pictures ?? new Map());
-      if (how === 'downloaded') setShareNote({ index, text: 'Downloaded — attach it to a message to send it.' });
+      const { how, missingPictures } = await sharePlanPdf(turn.plan, turn.sources ?? [], turn.pictures ?? new Map());
+      const notes = [
+        how === 'downloaded' ? 'Downloaded — attach it to a message to send it.' : '',
+        missingPictures > 0 ? `${missingPictures} picture${missingPictures === 1 ? '' : 's'} could not be included.` : '',
+      ].filter(Boolean);
+      if (notes.length) setShareNote({ index, text: notes.join(' ') });
     } catch (err) {
       setShareNote({ index, text: err instanceof Error ? `Could not make the PDF: ${err.message}` : 'Could not make the PDF.' });
     } finally {
@@ -242,7 +246,8 @@ export default function AskPanel({
     const text = label ? label(citation) : sourceLabel(source, citation.ts_ms);
     return (
       <button type="button" className={className} title={text} aria-label={`Open ${text}`} onClick={() => openCitation(citation)}>
-        {url ? <img src={url} alt="" loading="lazy" /> : null}
+        {/* CORS mode, so the cached copy is one the PDF export may also read. */}
+        {url ? <img src={url} alt="" loading="lazy" crossOrigin="anonymous" /> : null}
       </button>
     );
   };
