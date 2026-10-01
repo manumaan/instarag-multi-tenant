@@ -180,8 +180,9 @@ const json = (body: unknown): RequestInit => ({
   body: JSON.stringify(body),
 });
 
+/** `size=small`: the 288px tile image, a third of the web's 520px one (see infra/extract/src/ffmpeg.ts). */
 export const listMedia = (cursor?: string) =>
-  call<{ items: Media[]; cursor?: string }>(`/media${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`);
+  call<{ items: Media[]; cursor?: string }>(`/media?size=small${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`);
 
 export const getMedia = (id: string) => call<MediaDetail>(`/media/${encodeURIComponent(id)}`);
 
@@ -195,8 +196,26 @@ export const addFromUrl = (url: string) =>
 export const retryMedia = (id: string) =>
   call<{ mediaId: string; status: string }>(`/media/${encodeURIComponent(id)}/retry`, { method: 'POST' });
 
-export const ask = (question: string, options: { mediaId?: string; threadId?: string | null } = {}) =>
-  call<AskAnswer>('/ask', json({ question, mediaId: options.mediaId, threadId: options.threadId ?? undefined }));
+/**
+ * Ask, retrying once if the API cut the request off.
+ *
+ * The search index scales to zero, and waking it can outlast API Gateway's
+ * fixed 30s ceiling: the gateway answers 503/504 while the Lambda carries on
+ * and warms the index. Measured on 2026-09-30: two 5xx in the hour a reel's
+ * Ask kept "failing", with no Lambda error at all. A second attempt lands on a
+ * warm index and answers in seconds, so the user gets a slow answer instead of
+ * an error. Only once: a second failure is a real one.
+ */
+export async function ask(question: string, options: { mediaId?: string; threadId?: string | null } = {}) {
+  const send = () =>
+    call<AskAnswer>('/ask', json({ question, mediaId: options.mediaId, threadId: options.threadId ?? undefined }));
+  try {
+    return await send();
+  } catch (err) {
+    if (err instanceof ApiError && err.status >= 503) return send();
+    throw err;
+  }
+}
 
 /** Start a plan built from the whole library. Returns as soon as it is queued. */
 export const startPlan = (request: string, options: { threadId?: string | null } = {}) =>
@@ -206,6 +225,13 @@ export const getThread = (id: string) =>
   call<{ threadId: string; messages: ThreadMessage[] }>(`/threads/${encodeURIComponent(id)}`);
 
 export const listThreads = () => call<{ items: Thread[] }>('/threads');
+
+/**
+ * Where a plan's PDF lives: a download link if one was stored by an earlier
+ * share (from either app), or an upload link to store this one.
+ */
+export const planPdfLocation = (threadId: string, messageAt: string) =>
+  call<{ exists: boolean; url?: string; uploadUrl?: string }>('/plans/pdf', json({ threadId, messageAt }));
 
 /**
  * Whether a line asks for something built rather than a fact looked up. The
@@ -241,6 +267,16 @@ export function warmSearch() {
   if (Date.now() - lastWarm < 5 * 60_000) return;
   lastWarm = Date.now();
   void call('/ask/warm', json({})).catch(() => undefined);
+}
+
+/**
+ * The id a link will have once added: the shortcode, as the API keys content by
+ * it (POST /media/url). Knowing it up front lets the reel screen open at once
+ * and show progress, instead of a spinner waiting on the request.
+ * Mirrors IG_PERMALINK in infra/lambda/shared/media.ts.
+ */
+export function shortcodeOf(url: string): string | undefined {
+  return /^https?:\/\/(?:www\.)?instagram\.com\/(?:[A-Za-z0-9._]+\/)?(?:reel|reels|p|tv)\/([A-Za-z0-9_-]{5,})/i.exec(url.trim())?.[1];
 }
 
 /** Pull the first Instagram permalink out of shared text ("Check this out https://…"). */

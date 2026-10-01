@@ -63,61 +63,6 @@ export function StatusChip({ status }: { status: MediaStatus }) {
   );
 }
 
-/**
- * The pipeline's stages as a checklist, so a two-minute wait reads as progress
- * rather than a spinner. A carousel has no video to extract frames from, so it
- * skips that step; `awaiting_upload` never happens for a shared link.
- */
-export function PipelineProgress({ media }: { media: Pick<Media, 'status' | 'type' | 'slide_count' | 'error'> }) {
-  const t = useTheme();
-  const steps: Array<[MediaStatus, string]> = [
-    ['queued', 'Queued'],
-    ['downloading', 'Downloading from Instagram'],
-    ['extracting', 'Extracting keyframes and audio'],
-    ['analysing', 'Reading frames and transcribing'],
-    ['indexing', 'Indexing for search'],
-  ];
-  const visible = isSlideshow(media) ? steps.filter(([s]) => s !== 'extracting') : steps;
-  const current = visible.findIndex(([s]) => s === media.status);
-
-  if (media.status === 'failed') {
-    return (
-      <View>
-        <Text style={[styles.stepText, { color: t.failed, fontWeight: '600' }]}>Analysis failed</Text>
-        {media.error ? <Text style={[styles.small, { color: t.muted, marginTop: 4 }]}>{media.error}</Text> : null}
-      </View>
-    );
-  }
-
-  return (
-    <View style={{ gap: 10 }}>
-      {visible.map(([status, label], i) => {
-        const done = current > i || media.status === 'ready';
-        const active = current === i;
-        return (
-          <View key={status} style={styles.step}>
-            <View style={styles.stepIcon}>
-              {active ? (
-                <ActivityIndicator size="small" color={t.accent} />
-              ) : (
-                <View
-                  style={[
-                    styles.dot,
-                    { borderColor: done ? t.ready : t.border, backgroundColor: done ? t.ready : 'transparent' },
-                  ]}
-                />
-              )}
-            </View>
-            <Text style={[styles.stepText, { color: done || active ? t.text : t.muted, fontWeight: active ? '600' : '400' }]}>
-              {label}
-            </Text>
-          </View>
-        );
-      })}
-    </View>
-  );
-}
-
 export function Card({ children, style }: { children: React.ReactNode; style?: ViewStyle }) {
   const t = useTheme();
   return <View style={[styles.card, { backgroundColor: t.card, borderColor: t.border }, style]}>{children}</View>;

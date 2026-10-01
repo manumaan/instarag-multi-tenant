@@ -24,6 +24,8 @@ export const main = handler(async (event) => {
   const userId = callerId(event);
   const limitParam = Number(event.queryStringParameters?.limit);
   const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, MAX_LIMIT) : DEFAULT_LIMIT;
+  // The phone asks for its smaller tile image; the web keeps the 520px one.
+  const small = event.queryStringParameters?.size === 'small';
 
   const saves = await ddb.send(
     new QueryCommand({
@@ -55,7 +57,7 @@ export const main = handler(async (event) => {
   });
 
   return {
-    items: await Promise.all(items.map(withThumbnail)),
+    items: await Promise.all(items.map((item) => withThumbnail(item, small))),
     cursor: encodeCursor(saves.LastEvaluatedKey),
   };
 });
@@ -68,11 +70,12 @@ export const main = handler(async (event) => {
  * `cover_s3_key` predates nothing: reels extracted before it existed fall back
  * to the cover's deterministic key, which is always the frame at 0ms.
  */
-async function withThumbnail(media: MediaRecord): Promise<MediaRecord & { thumbnailUrl?: string }> {
+async function withThumbnail(media: MediaRecord, small = false): Promise<MediaRecord & { thumbnailUrl?: string }> {
   // Thumbnail first, then the cover frame, then the deterministic cover key.
   // Each fallback is a generation of this record: items ingested before
   // thumbnails existed, and before cover_s3_key existed, both still render.
   const key =
+    (small ? media.thumb_small_s3_key : undefined) ??
     media.thumb_s3_key ??
     media.cover_s3_key ??
     (media.s3_key ? `media/${media.id}/frames/00000000.jpg` : undefined);

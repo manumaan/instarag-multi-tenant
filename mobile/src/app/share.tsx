@@ -3,7 +3,7 @@ import { useShareIntentContext } from 'expo-share-intent';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Text, View } from 'react-native';
 import { Button, useTheme } from '../components/ui';
-import { addFromUrl, findInstagramUrl } from '../lib/api';
+import { findInstagramUrl, shortcodeOf } from '../lib/api';
 
 /**
  * Where a reel shared from Instagram lands.
@@ -29,21 +29,15 @@ export default function Share() {
     started.current = true;
 
     const url = findInstagramUrl(shareIntent.webUrl) ?? findInstagramUrl(shareIntent.text);
-    if (!url) {
+    const id = url ? shortcodeOf(url) : undefined;
+    resetShareIntent();
+    if (!url || !id) {
       setError("That doesn't look like an Instagram reel or post link. Share it from Instagram's share button.");
-      resetShareIntent();
       return;
     }
-
-    void addFromUrl(url)
-      .then(({ mediaId }) => {
-        resetShareIntent();
-        router.replace({ pathname: '/media/[id]', params: { id: mediaId } });
-      })
-      .catch((err: unknown) => {
-        resetShareIntent();
-        setError(err instanceof Error ? err.message : 'Could not add that reel.');
-      });
+    // Straight to the reel: it sends the request itself and shows its progress
+    // from the first second, instead of this screen waiting on a spinner.
+    router.replace({ pathname: '/media/[id]', params: { id, add: url } });
   }, [isReady, hasShareIntent, shareIntent, resetShareIntent]);
 
   return (
@@ -56,7 +50,7 @@ export default function Share() {
       ) : (
         <>
           <ActivityIndicator color={t.accent} />
-          <Text style={{ color: t.muted }}>Adding the reel…</Text>
+          <Text style={{ color: t.muted }}>Opening the reel…</Text>
         </>
       )}
     </View>

@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
-import { convertThumbnail, readFrame } from './ffmpeg';
+import { THUMB_SMALL_LONGEST_EDGE, convertThumbnail, readFrame } from './ffmpeg';
 
 const s3 = new S3Client({});
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -13,6 +13,8 @@ const BUCKET = process.env.MEDIA_BUCKET!;
 const MEDIA_TABLE = process.env.MEDIA_TABLE!;
 
 export const thumbnailKey = (mediaId: string) => `media/${mediaId}/thumb.jpg`;
+/** The phone's tile image (see THUMB_SMALL_LONGEST_EDGE). */
+export const smallThumbnailKey = (mediaId: string) => `media/${mediaId}/thumb-s.jpg`;
 
 /**
  * Writes the library grid's image for one item.
@@ -37,23 +39,28 @@ export async function writeThumbnail(mediaId: string, sourceKey: string): Promis
     const out = path.join(workDir, 'thumb.jpg');
     await convertThumbnail(source, out);
     const body = await readFrame(out);
+    const smallOut = path.join(workDir, 'thumb-s.jpg');
+    await convertThumbnail(source, smallOut, THUMB_SMALL_LONGEST_EDGE);
+    const smallBody = await readFrame(smallOut);
 
     const key = thumbnailKey(mediaId);
-    await s3.send(
-      new PutObjectCommand({ Bucket: BUCKET, Key: key, Body: body, ContentType: 'image/jpeg' }),
-    );
+    const smallKey = smallThumbnailKey(mediaId);
+    await Promise.all([
+      s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: key, Body: body, ContentType: 'image/jpeg' })),
+      s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: smallKey, Body: smallBody, ContentType: 'image/jpeg' })),
+    ]);
     await ddb.send(
       new UpdateCommand({
         TableName: MEDIA_TABLE,
         Key: { id: mediaId },
-        UpdateExpression: 'SET thumb_s3_key = :key',
-        ExpressionAttributeValues: { ':key': key },
+        UpdateExpression: 'SET thumb_s3_key = :key, thumb_small_s3_key = :small',
+        ExpressionAttributeValues: { ':key': key, ':small': smallKey },
         // Never resurrect a record deleted while this ran.
         ConditionExpression: 'attribute_exists(id)',
       }),
     );
 
-    console.log('thumbnail written', { mediaId, key, bytes: body.length });
+    console.log('thumbnail written', { mediaId, key, bytes: body.length, smallBytes: smallBody.length });
     return key;
   } catch (err) {
     console.warn('thumbnail failed; the grid will fall back to the cover frame', { mediaId, err });

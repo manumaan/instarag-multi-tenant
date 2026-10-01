@@ -134,16 +134,22 @@ export async function convertStill(input: string, outFile: string): Promise<Extr
  * 720px for a reel and 1568px for a carousel slide, the latter sized for the
  * vision pass to read body text off it. Fourteen tiles came to 1.22 MB.
  */
-const THUMB_LONGEST_EDGE = 520;
-const THUMB_SCALE_FILTER =
-  `scale=w='if(gt(iw,ih),min(iw,${THUMB_LONGEST_EDGE}),-2)':h='if(gt(iw,ih),-2,min(ih,${THUMB_LONGEST_EDGE}))'`;
+export const THUMB_LONGEST_EDGE = 520;
+/**
+ * The mobile library's tile is 72x96pt: 216x288 pixels on a 3x phone. Sending it
+ * the web's 520px image was 22 KB a tile on a phone that may be on mobile data;
+ * this is about a third of that.
+ */
+export const THUMB_SMALL_LONGEST_EDGE = 288;
+const thumbScaleFilter = (edge: number) =>
+  `scale=w='if(gt(iw,ih),min(iw,${edge}),-2)':h='if(gt(iw,ih),-2,min(ih,${edge}))'`;
 
 /** Downscales a cover frame for the library grid. Never upscales a small one. */
-export async function convertThumbnail(input: string, outFile: string): Promise<void> {
+export async function convertThumbnail(input: string, outFile: string, longestEdge = THUMB_LONGEST_EDGE): Promise<void> {
   await run(FFMPEG, [
     '-nostdin', '-y',
     '-i', input,
-    '-vf', THUMB_SCALE_FILTER,
+    '-vf', thumbScaleFilter(longestEdge),
     '-q:v', JPEG_QSCALE,
     '-pix_fmt', JPEG_PIX_FMT,
     outFile,

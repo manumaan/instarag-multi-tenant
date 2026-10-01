@@ -27,6 +27,8 @@ export interface MediaRecord {
   cover_s3_key?: string;
   /** The library grid's image: the cover, downscaled to tile size. */
   thumb_s3_key?: string;
+  /** The same at 288px, for the phone's tiles (GET /media?size=small). */
+  thumb_small_s3_key?: string;
   content_type?: string;
   bytes?: number;
   original_filename?: string;

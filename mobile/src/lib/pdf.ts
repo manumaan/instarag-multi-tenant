@@ -1,7 +1,7 @@
-import { File, Paths } from 'expo-file-system';
+import { File, Paths, UploadType } from 'expo-file-system';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
-import { creatorName, sourceLabel, type Plan, type Source } from './api';
+import { creatorName, planPdfLocation, sourceLabel, type Plan, type Source } from './api';
 import { frameKey } from './frames';
 
 /*
@@ -105,17 +105,58 @@ ${gaps}
 </body></html>`;
 }
 
-/** Render the plan to a PDF and open the share sheet with it. */
-export async function sharePlanPdf(plan: Plan, sources: Source[], pictures: Map<string, string>): Promise<void> {
-  const images = await inlineAll(pictures);
-  const { uri } = await Print.printToFileAsync({ html: planHtml(plan, sources, images), ...PAGE });
-
+/**
+ * The plan as a PDF file: the stored copy if an earlier share (from either
+ * app) uploaded one, otherwise built here and uploaded for next time.
+ *
+ * The store is best effort in both directions — a failed lookup or upload
+ * still produces and shares the PDF, it just is not reused.
+ */
+async function planPdfFile(
+  plan: Plan,
+  sources: Source[],
+  pictures: Map<string, string>,
+  stored?: { threadId: string; messageAt: string },
+): Promise<File> {
   // printToFileAsync names the file with a UUID; the recipient sees the name.
   const slug = plan.title.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'Reel-Lens-plan';
   const named = new File(Paths.cache, `${slug}.pdf`);
   if (named.exists) named.delete();
+
+  const location = stored ? await planPdfLocation(stored.threadId, stored.messageAt).catch(() => undefined) : undefined;
+  if (location?.exists && location.url) {
+    try {
+      return await File.downloadFileAsync(location.url, named);
+    } catch {
+      // Fall through and build it: a stored copy that cannot be fetched is not a reason to fail.
+    }
+  }
+
+  const images = await inlineAll(pictures);
+  const { uri } = await Print.printToFileAsync({ html: planHtml(plan, sources, images), ...PAGE });
   const printed = new File(uri);
   await printed.move(named);
+
+  if (location?.uploadUrl) {
+    await printed
+      .upload(location.uploadUrl, {
+        httpMethod: 'PUT',
+        uploadType: UploadType.BINARY_CONTENT,
+        headers: { 'content-type': 'application/pdf' },
+      })
+      .catch(() => undefined);
+  }
+  return printed;
+}
+
+/** Get the plan's PDF (stored or freshly built) and open the share sheet with it. */
+export async function sharePlanPdf(
+  plan: Plan,
+  sources: Source[],
+  pictures: Map<string, string>,
+  stored?: { threadId: string; messageAt: string },
+): Promise<void> {
+  const printed = await planPdfFile(plan, sources, pictures, stored);
 
   if (!(await Sharing.isAvailableAsync())) throw new Error('Sharing is not available on this device');
   await Sharing.shareAsync(printed.uri, {

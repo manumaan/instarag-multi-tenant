@@ -4,7 +4,8 @@ import { useShareIntentContext } from 'expo-share-intent';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { FlatList, Pressable, RefreshControl, Text, TextInput, View } from 'react-native';
 import { Button, StatusChip, isWorking, useTheme } from '../../components/ui';
-import { addFromUrl, findInstagramUrl, listMedia, type Media } from '../../lib/api';
+import { findInstagramUrl, listMedia, shortcodeOf, type Media } from '../../lib/api';
+import { stageSummary } from '../../components/Progress';
 import { subscribeToMedia } from '../../lib/ws';
 
 export default function Library() {
@@ -17,7 +18,6 @@ export default function Library() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string>();
   const [link, setLink] = useState('');
-  const [adding, setAdding] = useState(false);
   const loadingMore = useRef(false);
 
   // A share can arrive while the library is showing (or right after sign-in).
@@ -76,23 +76,17 @@ export default function Library() {
     }
   }
 
-  async function addLink() {
+  function addLink() {
     const url = findInstagramUrl(link);
-    if (!url) {
+    const id = url ? shortcodeOf(url) : undefined;
+    if (!url || !id) {
       setError('Paste an instagram.com reel or post link.');
       return;
     }
-    setAdding(true);
     setError(undefined);
-    try {
-      const { mediaId } = await addFromUrl(url);
-      setLink('');
-      router.push({ pathname: '/media/[id]', params: { id: mediaId } });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not add that link.');
-    } finally {
-      setAdding(false);
-    }
+    setLink('');
+    // The reel screen sends the request and shows progress from the first second.
+    router.push({ pathname: '/media/[id]', params: { id, add: url } });
   }
 
   return (
@@ -127,8 +121,7 @@ export default function Library() {
                 autoCorrect={false}
                 keyboardType="url"
                 returnKeyType="go"
-                onSubmitEditing={() => void addLink()}
-                editable={!adding}
+                onSubmitEditing={addLink}
                 style={{
                   flex: 1,
                   borderWidth: 1,
@@ -140,7 +133,7 @@ export default function Library() {
                   backgroundColor: t.card,
                 }}
               />
-              <Button title={adding ? 'Adding…' : 'Add'} kind="primary" onPress={() => void addLink()} disabled={adding || !link.trim()} />
+              <Button title="Add" kind="primary" onPress={addLink} disabled={!link.trim()} />
             </View>
             <Text style={{ fontSize: 13, color: t.muted }}>
               Or use Share → Reel Lens from any reel in Instagram.
@@ -165,6 +158,8 @@ function Tile({ media }: { media: Media }) {
   const t = useTheme();
   const title = media.uploader?.split(/[|·•]/)[0].trim() || (media.type === 'reel' ? 'Reel' : 'Post');
   const subtitle = media.analysis_summary ?? media.caption_raw ?? media.permalink ?? '';
+  // Where an unfinished reel is, so the tile says more than "in progress".
+  const working = isWorking(media.status) ? stageSummary(media) : undefined;
   return (
     <Pressable
       onPress={() => router.push({ pathname: '/media/[id]', params: { id: media.id } })}
@@ -182,7 +177,7 @@ function Tile({ media }: { media: Media }) {
       <Image
         // The presigned URL changes on every list call; key the cache on the
         // reel instead, or every refresh would download every tile again.
-        source={media.thumbnailUrl ? { uri: media.thumbnailUrl, cacheKey: `thumb-${media.id}` } : undefined}
+        source={media.thumbnailUrl ? { uri: media.thumbnailUrl, cacheKey: `thumb-s-${media.id}` } : undefined}
         style={{ width: 72, height: 96, borderRadius: 8, backgroundColor: t.border }}
         contentFit="cover"
         cachePolicy="memory-disk"
@@ -197,8 +192,17 @@ function Tile({ media }: { media: Media }) {
         </Text>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <StatusChip status={media.status} />
-          {isWorking(media.status) ? <Text style={{ fontSize: 12, color: t.muted }}>in progress</Text> : null}
+          {working ? (
+            <Text style={{ fontSize: 12, color: t.muted }}>
+              Step {working.step} of {working.of} · {working.label}
+            </Text>
+          ) : null}
         </View>
+        {working ? (
+          <View style={{ height: 4, borderRadius: 2, backgroundColor: t.border, overflow: 'hidden' }}>
+            <View style={{ height: '100%', width: `${Math.max(6, working.fraction * 100)}%`, backgroundColor: t.accent }} />
+          </View>
+        ) : null}
       </View>
     </Pressable>
   );

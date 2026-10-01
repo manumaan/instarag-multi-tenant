@@ -2,24 +2,25 @@
   "expo": {
     "name": "Reel Lens",
     "slug": "reel-lens",
-    "version": "0.1.0",
+    "version": "0.3.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "scheme": "reellens",
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.reellens.app"
+      "bundleIdentifier": "com.reellens.app",
+      "buildNumber": "3"
     },
     "android": {
       "package": "com.reellens.app",
       "adaptiveIcon": {
-        "backgroundColor": "#3b5bdb",
+        "backgroundColor": "#0a1540",
         "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "backgroundImage": "./assets/android-icon-background.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "versionCode": 3
     },
     "experiments": {
       "typedRoutes": true

@@ -75,7 +75,10 @@ export default function ThreadScreen() {
     if (!latestPlan?.plan || sharing) return;
     setSharing(true);
     try {
-      await sharePlanPdf(latestPlan.plan, latestPlan.sources ?? [], pictures);
+      await sharePlanPdf(latestPlan.plan, latestPlan.sources ?? [], pictures, {
+        threadId: id,
+        messageAt: latestPlan.created_at,
+      });
     } catch (err) {
       Alert.alert('Could not share the PDF', err instanceof Error ? err.message : String(err));
     } finally {
