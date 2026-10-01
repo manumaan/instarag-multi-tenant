@@ -261,6 +261,31 @@ export class Api extends Construct {
     allow(ask, ['bedrock:InvokeModel'], bedrockModelArns(props));
     props.search.grantRead(ask);
 
+    /*
+     * The plan cache (lambda/shared/plan-cache.ts): finished plans and their
+     * PDFs under plans/{user}/ in the media bucket. ListBucket, limited to that
+     * prefix, is what makes a miss answer NoSuchKey rather than AccessDenied —
+     * without it every first request would log as a permissions failure.
+     */
+    const plansPrefix = storage.mediaBucket.arnForObjects('plans/*');
+    const listPlans = (fn: NodejsFunction) =>
+      fn.addToRolePolicy(
+        new iam.PolicyStatement({
+          actions: ['s3:ListBucket'],
+          resources: [storage.mediaBucket.bucketArn],
+          conditions: { StringLike: { 's3:prefix': ['plans/*'] } },
+        }),
+      );
+    allow(ask, ['s3:GetObject'], [plansPrefix]);
+    listPlans(ask);
+    allow(planWorker, ['s3:PutObject'], [plansPrefix]);
+
+    // A plan's PDF: served from the bucket once it exists, uploaded by the first share.
+    const planPdf = makeSearchFn('PlanPdf', 'plan-pdf.ts');
+    allow(planPdf, ['dynamodb:GetItem'], [storage.threadsTable.tableArn, storage.messagesTable.tableArn]);
+    allow(planPdf, ['s3:GetObject', 's3:PutObject'], [plansPrefix]);
+    listPlans(planPdf);
+
     // Lens: find similar. Its own presigned-upload route, because a query
     // screenshot is transient and must not become a media record.
     const lensUpload = makeSearchFn('LensUpload', 'lens.ts', 'upload');
@@ -414,6 +439,7 @@ export class Api extends Construct {
       [apigw.HttpMethod.GET, '/admin/usage', adminUsage],
       [apigw.HttpMethod.GET, '/threads', listThreads],
       [apigw.HttpMethod.GET, '/threads/{id}', getThread],
+      [apigw.HttpMethod.POST, '/plans/pdf', planPdf],
       [apigw.HttpMethod.POST, '/lens/uploads', lensUpload],
       [apigw.HttpMethod.POST, '/lens/similar', lensSimilar],
       [apigw.HttpMethod.POST, '/lens/web', lensWeb],

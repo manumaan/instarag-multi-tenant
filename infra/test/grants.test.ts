@@ -46,6 +46,7 @@ const ENTRIES: Record<string, [string, string]> = {
   'Api/LensWeb': ['lambda/search/web-lens.ts', 'main'],
   'Api/ListThreads': ['lambda/search/list-threads.ts', 'main'],
   'Api/GetThread': ['lambda/search/get-thread.ts', 'main'],
+  'Api/PlanPdf': ['lambda/search/plan-pdf.ts', 'main'],
   'Api/AdminInviteCreate': ['lambda/admin/invites.ts', 'create'],
   'Api/AdminInviteList': ['lambda/admin/invites.ts', 'list'],
   'Api/AdminInviteRevoke': ['lambda/admin/invites.ts', 'revoke'],

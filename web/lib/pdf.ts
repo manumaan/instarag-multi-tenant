@@ -1,6 +1,6 @@
 'use client';
 
-import { sourceLabel, type Plan, type Source } from './api';
+import { planPdfLocation, sourceLabel, type Plan, type Source } from './api';
 import { frameKey } from './frames';
 
 /*
@@ -154,6 +154,44 @@ export async function planPdf(
 }
 
 /**
+ * The stored PDF if an earlier share (from either app) uploaded one; otherwise
+ * built here and uploaded for next time. Best effort both ways: a failed
+ * lookup or upload still produces the PDF, it just is not reused.
+ */
+async function storedOrBuilt(
+  plan: Plan,
+  sources: Source[],
+  pictures: Map<string, string>,
+  stored?: { threadId: string; messageAt: string },
+): Promise<{ file: File; missingPictures: number; reused: boolean }> {
+  const location = stored ? await planPdfLocation(stored.threadId, stored.messageAt).catch(() => undefined) : undefined;
+  if (location?.exists && location.url) {
+    try {
+      const response = await fetch(location.url, { cache: 'no-store' });
+      if (response.ok) {
+        return {
+          file: new File([await response.blob()], fileName(plan), { type: 'application/pdf' }),
+          missingPictures: 0,
+          reused: true,
+        };
+      }
+    } catch {
+      // Fall through and build it.
+    }
+  }
+
+  const built = await planPdf(plan, sources, pictures);
+  if (location?.uploadUrl) {
+    await fetch(location.uploadUrl, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/pdf' },
+      body: built.file,
+    }).catch(() => undefined);
+  }
+  return { ...built, reused: false };
+}
+
+/**
  * Share where the browser can (the system share sheet: Mail, Messages,
  * AirDrop, WhatsApp — the user picks the recipient), download where it can't.
  * Desktop Chrome on macOS is the common case that falls back to a download.
@@ -162,16 +200,17 @@ export async function sharePlanPdf(
   plan: Plan,
   sources: Source[],
   pictures: Map<string, string>,
-): Promise<{ how: 'shared' | 'downloaded'; missingPictures: number }> {
-  const { file, missingPictures } = await planPdf(plan, sources, pictures);
+  stored?: { threadId: string; messageAt: string },
+): Promise<{ how: 'shared' | 'downloaded'; missingPictures: number; reused: boolean }> {
+  const { file, missingPictures, reused } = await storedOrBuilt(plan, sources, pictures, stored);
 
   if (navigator.canShare?.({ files: [file] })) {
     try {
       await navigator.share({ files: [file], title: plan.title });
-      return { how: 'shared', missingPictures };
+      return { how: 'shared', missingPictures, reused };
     } catch (err) {
       // Closing the share sheet is a choice, not a failure.
-      if ((err as Error).name === 'AbortError') return { how: 'shared', missingPictures };
+      if ((err as Error).name === 'AbortError') return { how: 'shared', missingPictures, reused };
       // Anything else falls through to a download.
     }
   }
@@ -184,5 +223,5 @@ export async function sharePlanPdf(
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
-  return { how: 'downloaded', missingPictures };
+  return { how: 'downloaded', missingPictures, reused };
 }

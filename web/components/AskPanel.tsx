@@ -33,6 +33,8 @@ interface Turn {
   error?: string;
   /** frameKey → keyframe URL for every cited moment, once fetched. */
   pictures?: Map<string, string>;
+  /** Where the plan's message lives, so its stored PDF can be found. */
+  planAt?: { threadId: string; messageAt: string };
 }
 
 /** A plan takes about a minute; give up well after that rather than forever. */
@@ -90,6 +92,14 @@ export default function AskPanel({
       warmedAt.current = 0;
     });
   };
+
+  // Wake the index as soon as the panel is on screen — on a reel's page the
+  // reel is usually watched first, which covers most of the warm-up. Focusing
+  // the box alone left too little time before the API's 30s ceiling.
+  useEffect(() => {
+    warm();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const detected: Mode = looksLikePlan(question) ? 'plan' : 'answer';
   const mode: Mode = forcedMode ?? detected;
@@ -158,6 +168,7 @@ export default function AskPanel({
       if (asking === 'plan') {
         const started = await startPlan(asked, { mediaId, threadId });
         setThreadId(started.threadId);
+        update({ planAt: { threadId: started.threadId, messageAt: started.messageAt } });
         await waitForPlan(started.threadId, started.messageAt, index);
       } else {
         const answer = await ask(asked, { mediaId, threadId });
@@ -224,7 +235,12 @@ export default function AskPanel({
     setSharing(index);
     setShareNote(undefined);
     try {
-      const { how, missingPictures } = await sharePlanPdf(turn.plan, turn.sources ?? [], turn.pictures ?? new Map());
+      const { how, missingPictures } = await sharePlanPdf(
+        turn.plan,
+        turn.sources ?? [],
+        turn.pictures ?? new Map(),
+        turn.planAt,
+      );
       const notes = [
         how === 'downloaded' ? 'Downloaded — attach it to a message to send it.' : '',
         missingPictures > 0 ? `${missingPictures} picture${missingPictures === 1 ? '' : 's'} could not be included.` : '',

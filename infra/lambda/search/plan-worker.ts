@@ -2,6 +2,7 @@ import { UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { ddb } from '../shared/ddb';
 import { buildPlan } from './plan';
 import { planToText, sourcesFor } from './sources';
+import { writeCachedPlan } from '../shared/plan-cache';
 
 const MESSAGES_TABLE = process.env.MESSAGES_TABLE!;
 
@@ -13,6 +14,8 @@ export interface PlanJob {
   createdAt: string;
   request: string;
   mediaId?: string;
+  /** Where to keep the finished plan for the next identical request (shared/plan-cache.ts). */
+  planKey?: string;
 }
 
 /**
@@ -27,13 +30,24 @@ export interface PlanJob {
  * already existed.
  */
 export async function handler(job: PlanJob): Promise<void> {
-  const { threadId, createdAt, request, mediaId, userId } = job;
+  const { threadId, createdAt, request, mediaId, userId, planKey } = job;
   console.log('plan job started', { threadId, createdAt, mediaId });
 
   try {
     const plan = await buildPlan(request, { userId, mediaId });
     const cited = plan.sections.flatMap((section) => section.items.flatMap((item) => item.citations));
     const sources = await sourcesFor([...new Set(cited.map((c) => c.media_id))]);
+    const status = plan.answered ? ('ready' as const) : ('unsupported' as const);
+    const content = planToText(plan.title, plan.overview, plan.sections, plan.gaps);
+    const stored = {
+      title: plan.title,
+      overview: plan.overview,
+      sections: plan.sections,
+      gaps: plan.gaps,
+      queries: plan.queries,
+      moments: plan.retrieved.length,
+      itemsDropped: plan.itemsDropped,
+    };
 
     await ddb.send(
       new UpdateCommand({
@@ -48,24 +62,20 @@ export async function handler(job: PlanJob): Promise<void> {
           '#error': 'error',
         },
         ExpressionAttributeValues: {
-          ':status': plan.answered ? 'ready' : 'unsupported',
-          ':content': planToText(plan.title, plan.overview, plan.sections, plan.gaps),
+          ':status': status,
+          ':content': content,
           ':citations': cited,
-          ':plan': {
-            title: plan.title,
-            overview: plan.overview,
-            sections: plan.sections,
-            gaps: plan.gaps,
-            queries: plan.queries,
-            moments: plan.retrieved.length,
-            itemsDropped: plan.itemsDropped,
-          },
+          ':plan': stored,
           ':sources': sources,
         },
         // Never resurrect a message whose thread was deleted while this ran.
         ConditionExpression: 'attribute_exists(thread_id)',
       }),
     );
+
+    // Kept for the next identical request. A failed build is not cached, so
+    // asking again retries it.
+    if (planKey) await writeCachedPlan(userId, planKey, { status, content, citations: cited, plan: stored, sources });
 
     console.log('plan job finished', {
       threadId,

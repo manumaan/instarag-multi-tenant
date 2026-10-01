@@ -10,6 +10,7 @@ import { retrieve, warmIndex, type Hit } from './retrieve';
 import { requireThread } from '../shared/threads';
 import { sourcesFor } from './sources';
 import { recordUsage } from '../shared/usage';
+import { planCacheKey, readCachedPlan } from '../shared/plan-cache';
 
 const THREADS_TABLE = process.env.THREADS_TABLE!;
 const MESSAGES_TABLE = process.env.MESSAGES_TABLE!;
@@ -232,7 +233,20 @@ async function planAnswer(request: string, body: AskBody, userId: string) {
   // Microsecond suffix keeps the answer after its question in sort order.
   const assistantAt = `${now}#a`;
 
-  await startTurn(userId, threadId, body.mediaId, request, now, assistantAt);
+  /*
+   * The same person asking the same thing of the same library gets the plan
+   * already built for it: no minute-long build, no model spend. It lands on
+   * the thread already finished, so the clients' polling needs no change.
+   * See shared/plan-cache.ts for what the key covers and why.
+   */
+  const planKey = await planCacheKey(userId, request, body.mediaId);
+  const cached = await readCachedPlan(userId, planKey);
+  if (cached) {
+    await startTurn(userId, threadId, body.mediaId, request, now, assistantAt, { ...cached, plan_key: planKey, cached: true });
+    return { threadId, mode: 'plan' as const, status: cached.status, messageAt: assistantAt, cached: true };
+  }
+
+  await startTurn(userId, threadId, body.mediaId, request, now, assistantAt, { plan_key: planKey });
 
   await lambda.send(
     new InvokeCommand({
@@ -246,7 +260,7 @@ async function planAnswer(request: string, body: AskBody, userId: string) {
        * as given, never as something to re-derive from the request.
        */
       Payload: Buffer.from(
-        JSON.stringify({ threadId, createdAt: assistantAt, request, mediaId: body.mediaId, userId }),
+        JSON.stringify({ threadId, createdAt: assistantAt, request, mediaId: body.mediaId, userId, planKey }),
       ),
     }),
   );
@@ -262,6 +276,8 @@ async function startTurn(
   question: string,
   now: string,
   assistantAt: string,
+  /** A cached plan to write as already answered, or just the cache key for the worker's result. */
+  answer: Record<string, unknown>,
 ) {
   await startThread(userId, threadId, mediaId, question, now);
   await ddb.send(
@@ -281,6 +297,8 @@ async function startTurn(
         status: 'working',
         content: '',
         citations: [],
+        // A cached plan overrides the placeholder fields above.
+        ...answer,
       },
     }),
   );

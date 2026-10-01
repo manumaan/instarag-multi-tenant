@@ -229,12 +229,25 @@ export interface Thread {
 }
 
 /** Ask a question, optionally scoped to one reel. */
-export const ask = (question: string, options: { mediaId?: string; threadId?: string } = {}) =>
-  call<AskAnswer>('/ask', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ question, mediaId: options.mediaId, threadId: options.threadId }),
-  });
+export async function ask(question: string, options: { mediaId?: string; threadId?: string } = {}) {
+  const send = () =>
+    call<AskAnswer>('/ask', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ question, mediaId: options.mediaId, threadId: options.threadId }),
+    });
+  // Retry once if the API cut the request off: the search index scales to zero
+  // and waking it can outlast API Gateway's 30s ceiling, which answers 503/504
+  // while the Lambda warms the index. The second attempt lands on a warm index.
+  try {
+    return await send();
+  } catch (err) {
+    // In a browser the gateway's timeout can also arrive without CORS headers,
+    // which fetch reports as a network error rather than a 504.
+    if (err instanceof Error && /^(503|504)\b|Service Unavailable|Gateway Timeout|timed out|Failed to fetch|Load failed|NetworkError/i.test(err.message)) return send();
+    throw err;
+  }
+}
 
 /**
  * Wakes the search index ahead of a question.
@@ -339,6 +352,14 @@ export function sourceLabel(source: Source | undefined, tsMs: number): string {
 }
 
 export const listThreads = () => call<{ items: Thread[] }>('/threads');
+
+/** A plan's stored PDF, or where to store one (see infra/lambda/search/plan-pdf.ts). */
+export const planPdfLocation = (threadId: string, messageAt: string) =>
+  call<{ exists: boolean; url?: string; uploadUrl?: string }>('/plans/pdf', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ threadId, messageAt }),
+  });
 
 export interface SimilarMatch {
   media_id: string;

@@ -62,7 +62,8 @@ test('the plan worker is given its caller rather than inferring one', () => {
   const ask = read('lambda/search/ask.ts');
   assert.match(worker, /userId: string/);
   assert.match(worker, /buildPlan\(request, \{ userId, mediaId \}\)/);
-  assert.match(ask, /JSON\.stringify\(\{ threadId, createdAt: assistantAt, request, mediaId: body\.mediaId, userId \}\)/);
+  // The caller's id rides in the worker payload beside the plan-cache key.
+  assert.match(ask, /JSON\.stringify\(\{ threadId, createdAt: assistantAt, request, mediaId: body\.mediaId, userId(, planKey)? \}\)/);
 });
 
 test('the broadcaster reaches only the people who hold the content', () => {

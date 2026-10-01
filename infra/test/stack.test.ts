@@ -77,7 +77,7 @@ test('every API route is authorised by the user pool', () => {
   // Four admin routes joined the nineteen; all of them, admin included, sit
   // behind the pool authorizer — the group check is an extra gate inside, not
   // a substitute for this one.
-  assert.equal(routes.length, 23);
+  assert.equal(routes.length, 24);
   for (const [name, route] of routes) {
     assert.equal(route.Properties.AuthorizationType, 'JWT', `${name} must require a JWT`);
   }
