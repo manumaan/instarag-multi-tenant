@@ -28,7 +28,11 @@ export const PlaceSchema = z.object({
 export const AnalysedFrameSchema = z.object({
   ts_ms: z.number(),
   description: z.string().describe('what is happening in the frame, written for search and question answering'),
-  ocr_text: z.string().describe('every piece of text legible in the frame, verbatim; empty string when there is none'),
+  ocr_text: z
+    .string()
+    .describe(
+      'every piece of text legible in the frame, verbatim — captions and signage, and screen text too: URLs and address bars, dashboard figures, labels, pop-ups; empty string when there is none',
+    ),
 });
 
 export const AnalysisSchema = z.object({

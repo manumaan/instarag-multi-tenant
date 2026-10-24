@@ -1,10 +1,12 @@
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { z } from 'zod';
 import { retrieveMany, type Hit } from './retrieve';
-import { claude } from '../shared/claude';
+import { clientFor } from '../shared/claude';
+import type { ModelChoice } from '../shared/model-override';
 import { recordUsage } from '../shared/usage';
 
 const SYNTHESIS_MODEL_ID = process.env.ANSWER_MODEL_ID!;
+const SYNTHESIS_EFFORT = (process.env.ANSWER_EFFORT ?? 'low') as 'low' | 'medium' | 'high';
 /** Haiku's job here is the cheap pass: turning one request into several queries. */
 const EXPANSION_MODEL_ID = process.env.EXPANSION_MODEL_ID!;
 
@@ -86,7 +88,7 @@ export function planQueries(request: string, expansion?: { topic?: string; queri
 /** One request becomes several searches. A failure here costs breadth, not the answer. */
 export async function expandRequest(request: string, userId?: string): Promise<string[]> {
   try {
-    const response = await (await claude()).messages.parse({
+    const response = await (await clientFor(EXPANSION_MODEL_ID)).messages.parse({
       model: EXPANSION_MODEL_ID,
       max_tokens: 512,
       output_config: { format: zodOutputFormat(ExpansionSchema) },
@@ -174,20 +176,22 @@ export interface PlanResult {
   itemsDropped: number;
   inputTokens: number;
   outputTokens: number;
+  /** The synthesis model, which a comparison needs to attribute cost. */
+  model?: string;
 }
 
 /**
  * Builds something out of the whole library rather than answering from one
  * moment: "create a travel plan for Istanbul with all the tips".
  *
- * Effort stays low and the moment count is capped because this has to return
- * inside API Gateway's 30-second integration timeout, which cannot be raised on
- * an HTTP API. The Lambda would happily run for 60.
+ * Runs in the plan worker, off the request, so it is not bound by API Gateway's
+ * 30-second ceiling; effort comes from ANSWER_EFFORT.
  */
 export async function buildPlan(
   request: string,
-  options: { userId: string; mediaId?: string },
+  options: { userId: string; mediaId?: string; override?: ModelChoice },
 ): Promise<PlanResult> {
+  const model = options.override?.model ?? SYNTHESIS_MODEL_ID;
   // Stage timings, because this runs against a 30-second ceiling and a total
   // tells you nothing about which stage spent it.
   const started = Date.now();
@@ -224,11 +228,11 @@ export async function buildPlan(
     };
   }
 
-  const response = await (await claude()).messages.parse({
-    model: SYNTHESIS_MODEL_ID,
+  const response = await (await clientFor(model)).messages.parse({
+    model,
     max_tokens: PLAN_MAX_TOKENS,
     thinking: { type: 'adaptive' },
-    output_config: { effort: 'low', format: zodOutputFormat(PlanSchema) },
+    output_config: { effort: options.override?.effort ?? SYNTHESIS_EFFORT, format: zodOutputFormat(PlanSchema) },
     system: [
       "You assemble practical guides out of moments taken from someone's own saved Instagram clips.",
       'Each moment carries its media_id and ts_ms. A frame moment says what is visible and any text read off it',
@@ -250,7 +254,7 @@ export async function buildPlan(
 
   console.log('plan synthesis', { synthesisMs: since() - retrievedAt, totalMs: since() });
 
-  recordUsage('plan', SYNTHESIS_MODEL_ID, response.usage, options.userId);
+  recordUsage('plan', model, response.usage, options.userId);
 
   const parsed = response.parsed_output;
   if (!parsed) {
@@ -274,5 +278,6 @@ export async function buildPlan(
     itemsDropped: grounded.itemsDropped,
     inputTokens: response.usage.input_tokens,
     outputTokens: response.usage.output_tokens,
+    model,
   };
 }

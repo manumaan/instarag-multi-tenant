@@ -27,6 +27,8 @@ export interface Media {
   permalink?: string;
   caption_raw?: string;
   caption_normalized?: string;
+  /** Hype or true, when anyone who saved this reel has run it. */
+  claim_check?: ClaimCheck;
   taken_at?: string;
   uploader?: string;
   analysis_summary?: string;
@@ -420,6 +422,62 @@ export const searchTheWeb = (query: { s3Key: string } | { mediaId: string; tsMs:
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(query),
   });
+
+export type ClaimVerdict = 'supported' | 'partly_supported' | 'disputed' | 'unverifiable' | 'not_checked';
+export type ClaimLabel = 'mostly_true' | 'mixed' | 'mostly_hype' | 'cant_verify';
+
+export interface CheckedClaim {
+  text: string;
+  ts_ms?: number;
+  kind: 'factual' | 'opinion' | 'promotional';
+  /** web: a source can settle it. reel: the creator's own results, judged against the reel. */
+  basis: 'web' | 'reel';
+  verdict: ClaimVerdict;
+  explanation: string;
+  reel_assessment?: 'backed' | 'inconsistent' | 'not_shown';
+  reel_note?: string;
+  query?: string;
+  sources: Array<{ title: string; url: string }>;
+}
+
+export interface ClaimReport {
+  /** 0-100, or null when nothing factual could be judged. */
+  score: number | null;
+  label: ClaimLabel;
+  evidence_score: number | null;
+  base_score: number;
+  red_flag_penalty: number;
+  hype_penalty: number;
+  judged: number;
+  summary: string;
+  topic: string;
+  claims: CheckedClaim[];
+  /** What the reel shows against itself. */
+  red_flags: Array<{ kind: string; finding: string; ts_ms: number[] }>;
+  hype_signals: Array<{ signal: string; quote: string; ts_ms?: number }>;
+  plausible: Array<{ point: string; sources: Array<{ title: string; url: string }> }>;
+  model: string;
+}
+
+export interface ClaimCheck {
+  status: 'working' | 'ready' | 'failed';
+  started_at: string;
+  finished_at?: string;
+  error?: string;
+  /** The last finished report, kept while a re-check runs. */
+  report?: ClaimReport;
+}
+
+/** Hype or true: start a check, or get the one this reel already has. Shared by everyone who saved it. */
+export const startClaimCheck = (id: string, refresh = false) =>
+  call<{ mediaId: string; check: ClaimCheck | null; started: boolean }>(`/media/${id}/claims`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ refresh }),
+  });
+
+export const getClaimCheck = (id: string) =>
+  call<{ mediaId: string; check: ClaimCheck | null }>(`/media/${id}/claims`);
 
 export const getThread = (id: string) =>
   call<{ threadId: string; messages: ThreadMessage[] }>(`/threads/${id}`);

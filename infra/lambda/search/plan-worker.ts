@@ -3,6 +3,7 @@ import { ddb } from '../shared/ddb';
 import { buildPlan } from './plan';
 import { planToText, sourcesFor } from './sources';
 import { writeCachedPlan } from '../shared/plan-cache';
+import type { ModelChoice } from '../shared/model-override';
 
 const MESSAGES_TABLE = process.env.MESSAGES_TABLE!;
 
@@ -16,6 +17,8 @@ export interface PlanJob {
   mediaId?: string;
   /** Where to keep the finished plan for the next identical request (shared/plan-cache.ts). */
   planKey?: string;
+  /** Set only by an admin's model comparison (validated in ask.ts before it got here). */
+  override?: ModelChoice;
 }
 
 /**
@@ -30,11 +33,11 @@ export interface PlanJob {
  * already existed.
  */
 export async function handler(job: PlanJob): Promise<void> {
-  const { threadId, createdAt, request, mediaId, userId, planKey } = job;
+  const { threadId, createdAt, request, mediaId, userId, planKey, override } = job;
   console.log('plan job started', { threadId, createdAt, mediaId });
 
   try {
-    const plan = await buildPlan(request, { userId, mediaId });
+    const plan = await buildPlan(request, { userId, mediaId, override });
     const cited = plan.sections.flatMap((section) => section.items.flatMap((item) => item.citations));
     const sources = await sourcesFor([...new Set(cited.map((c) => c.media_id))]);
     const status = plan.answered ? ('ready' as const) : ('unsupported' as const);
@@ -47,6 +50,8 @@ export async function handler(job: PlanJob): Promise<void> {
       queries: plan.queries,
       moments: plan.retrieved.length,
       itemsDropped: plan.itemsDropped,
+      // What built it and what it cost, so a comparison can be read off the thread.
+      ...(override ? { model: plan.model, inputTokens: plan.inputTokens, outputTokens: plan.outputTokens } : {}),
     };
 
     await ddb.send(

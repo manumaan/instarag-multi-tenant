@@ -14,6 +14,7 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
+import { FrameViewer } from '../../components/FrameViewer';
 import { ProgressCard } from '../../components/Progress';
 import { Button, Card, SectionTitle, StatusChip, isWorking, useTheme } from '../../components/ui';
 import {
@@ -49,6 +50,8 @@ export default function ReelDetail() {
   const scroll = useRef<ScrollView>(null);
   const slides = useRef<FlatList>(null);
   const { width } = useWindowDimensions();
+  /** Index of the keyframe open full size, if any. */
+  const [viewing, setViewing] = useState<number>();
 
   const load = useCallback(async () => {
     try {
@@ -334,10 +337,24 @@ export default function ReelDetail() {
           <Card>
             <SectionTitle>Keyframes</SectionTitle>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-              {detail.frames.map((f) => (
-                <Pressable key={f.ts_ms} onPress={() => seek(f.ts_ms)} style={{ gap: 4 }}>
+              {detail.frames.map((f, i) => (
+                <Pressable
+                  key={f.ts_ms}
+                  onPress={() => setViewing(i)}
+                  accessibilityRole="imagebutton"
+                  accessibilityLabel={`Open the frame at ${momentLabel(media, f.ts_ms)}`}
+                  style={{ gap: 4 }}
+                >
                   <Image
-                    source={f.url ? { uri: f.url, cacheKey: `frame-${f.media_id}:${f.ts_ms}` } : undefined}
+                    // The small copy: twenty full keyframes are ~900 KB to scroll past.
+                    // The full frame loads only when one is opened.
+                    source={
+                      f.thumb_url
+                        ? { uri: f.thumb_url, cacheKey: `frame-s-${f.media_id}:${f.ts_ms}` }
+                        : f.url
+                          ? { uri: f.url, cacheKey: `frame-${f.media_id}:${f.ts_ms}` }
+                          : undefined
+                    }
                     style={{ width: 90, height: 120, borderRadius: 6, backgroundColor: t.border }}
                     contentFit="cover"
                   />
@@ -368,6 +385,9 @@ export default function ReelDetail() {
           <Button title="Open in Instagram" onPress={() => void Linking.openURL(media.permalink!)} />
         ) : null}
       </ScrollView>
+      {viewing !== undefined ? (
+        <FrameViewer media={media} frames={detail.frames} index={viewing} onClose={() => setViewing(undefined)} />
+      ) : null}
     </>
   );
 }

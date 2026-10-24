@@ -18,6 +18,7 @@ export interface ReelLensStackProps extends StackProps {
   readonly analysisModel: string;
   /** Model for Ask, plans and Lens. Cheaper and faster than the vision model. */
   readonly answerModel: string;
+  readonly answerEffort: string;
   /** Cheap model for the query-expansion pass in front of a plan. */
   readonly expansionModel: string;
   readonly maxFrames: number;
@@ -33,6 +34,10 @@ export interface ReelLensStackProps extends StackProps {
   readonly hourlyTokenBudget: number;
   /** Secrets Manager name for the Anthropic API key. Set by hand, so it is a name. */
   readonly claudeSecretName: string;
+  /** Secret holding the OpenRouter key, for vendor-prefixed model ids. */
+  readonly openRouterSecretName?: string;
+  /** Comma-separated model ids an admin may choose per request. */
+  readonly modelOverrides?: string;
 }
 
 /**
@@ -84,6 +89,13 @@ export class ReelLensStack extends Stack {
       description: 'Anthropic API key for the vision, Ask, plan and Lens passes.',
     });
 
+    // OpenRouter: one key for the Claude models and others (OpenAI's Luna), used
+    // for any model id with a vendor prefix. Named, because it is set by hand.
+    const openRouterKey = new secretsmanager.Secret(this, 'OpenRouterApiKey', {
+      secretName: props.openRouterSecretName ?? 'instarag-openrouter-key-mt',
+      description: 'OpenRouter API key for vendor-prefixed model ids (anthropic/..., openai/...).',
+    });
+
     const auth = new Auth(this, 'Auth', { webOrigins, siteUrl: hosting.origin });
 
     const search = new Search(this, 'Search', { maxOcu: props.maxOcu });
@@ -105,9 +117,12 @@ export class ReelLensStack extends Stack {
       connected,
       analysisModel: props.analysisModel,
       answerModel: props.answerModel,
+      answerEffort: props.answerEffort,
       expansionModel: props.expansionModel,
       embeddingModel: props.embeddingModel,
       claudeKey,
+      openRouterKey,
+      modelOverrides: props.modelOverrides ?? '',
     });
 
     const pipeline = new Pipeline(this, 'Pipeline', {
@@ -117,6 +132,7 @@ export class ReelLensStack extends Stack {
       maxFrames: props.maxFrames,
       embeddingModel: props.embeddingModel,
       claudeKey,
+      openRouterKey,
     });
     const realtime = new Realtime(this, 'Realtime', { storage, auth });
 

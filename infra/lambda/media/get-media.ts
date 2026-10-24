@@ -52,6 +52,12 @@ export const main = handler(async (event) => {
             expiresIn: URL_TTL_SECONDS,
           })
         : undefined,
+      // The filmstrip copy, a few KB, for the phone's strip; the full frame opens on tap.
+      thumb_url: frame.thumb_s3_key
+        ? await getSignedUrl(s3, new GetObjectCommand({ Bucket: BUCKET, Key: frame.thumb_s3_key as string }), {
+            expiresIn: URL_TTL_SECONDS,
+          })
+        : undefined,
     })),
   );
 

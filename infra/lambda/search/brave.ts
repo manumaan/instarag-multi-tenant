@@ -6,6 +6,10 @@
  * results at `web.results[]` carrying title, url and description.
  */
 
+import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
+
+const secrets = new SecretsManagerClient({});
+
 const ENDPOINT = 'https://api.search.brave.com/res/v1/web/search';
 
 export interface WebResult {
@@ -63,4 +67,31 @@ export async function searchWeb(query: string, apiKey: string, count = 8): Promi
     throw new Error(`Brave search failed: ${response.status}`);
   }
   return parseResults(await response.json());
+}
+
+/**
+ * Cached across invocations, because the key changes rarely and the call is not
+ * free — but with a TTL, and never when empty. Caching an empty key would stick
+ * for the container's whole life and keep reporting "not configured" after the
+ * key had actually been set.
+ */
+let cached: { key: string; at: number } | undefined;
+const KEY_TTL_MS = 5 * 60 * 1000;
+
+/** The Brave key from SEARCH_SECRET_ARN, or '' when none has been set. */
+export async function loadApiKey(): Promise<string> {
+  if (cached && Date.now() - cached.at < KEY_TTL_MS) return cached.key;
+
+  let key = '';
+  try {
+    const secret = await secrets.send(new GetSecretValueCommand({ SecretId: process.env.SEARCH_SECRET_ARN! }));
+    const raw = (secret.SecretString ?? '').trim();
+    // The secret may hold a bare key or a JSON object with an apiKey field.
+    key = raw.startsWith('{') ? String(JSON.parse(raw).apiKey ?? '') : raw;
+  } catch (err) {
+    console.warn('could not read the search key', { err: err instanceof Error ? err.message : err });
+  }
+
+  if (key) cached = { key, at: Date.now() };
+  return key;
 }

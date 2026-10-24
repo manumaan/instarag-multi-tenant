@@ -32,8 +32,17 @@ const retentionDays = retentionDaysRaw ? Number(retentionDaysRaw) : undefined;
  */
 const analysisModel = app.node.tryGetContext('analysisModel') ?? 'claude-opus-5';
 
-/** Ask, plans and Lens. Sonnet 5 is faster than Opus and cheaper per token. */
-const answerModel = app.node.tryGetContext('answerModel') ?? 'claude-sonnet-5';
+/**
+ * Ask, plans and Lens, via OpenRouter. GPT-6 Luna Pro at high effort, chosen
+ * 2026-10-05 from scripts/compare-models.ts on the real library: 6/6 answered
+ * with no citation dropped, and it declined to name a hotel the frame does not
+ * show where Sonnet 5 guessed one. About 1/13 of Sonnet's cost per answer, at
+ * roughly 3x the latency (11s per Ask, 63s per plan, which runs async).
+ */
+const answerModel = app.node.tryGetContext('answerModel') ?? 'openai/gpt-6-luna-pro';
+
+/** Effort for Ask and plans. Lens stays low: two calls inside a 30s API ceiling. */
+const answerEffort = app.node.tryGetContext('answerEffort') ?? 'high';
 
 /**
  * The cheap pass in front of a plan: one request becomes several searches.
@@ -97,6 +106,20 @@ const stackName = app.node.tryGetContext('stackName') ?? 'ReelLensMultiTenant';
  */
 const claudeSecretName = app.node.tryGetContext('claudeSecretName') ?? 'instarag-claude-key-mt';
 
+/**
+ * OpenRouter's key, for every model id with a vendor prefix (`anthropic/…`,
+ * `openai/…`); see lambda/shared/claude.ts. Its own secret, set by hand:
+ *   aws secretsmanager put-secret-value --secret-id instarag-openrouter-key-mt --secret-string <key>
+ */
+const openRouterSecretName = app.node.tryGetContext('openRouterSecretName') ?? 'instarag-openrouter-key-mt';
+
+/**
+ * Models an admin may pick per request (POST /ask with `model`), to compare
+ * candidates on the real code path before changing a default.
+ */
+const modelOverrides =
+  app.node.tryGetContext('modelOverrides') ?? 'openai/gpt-6-luna,openai/gpt-6-luna-pro,claude-sonnet-5,anthropic/claude-sonnet-5';
+
 new ReelLensStack(app, stackName, {
   env: { account: process.env.CDK_DEFAULT_ACCOUNT, region: process.env.CDK_DEFAULT_REGION ?? 'us-east-1' },
   webOrigins,
@@ -104,6 +127,7 @@ new ReelLensStack(app, stackName, {
   retentionDays,
   analysisModel,
   answerModel,
+  answerEffort,
   expansionModel,
   maxFrames,
   embeddingModel,
@@ -113,5 +137,7 @@ new ReelLensStack(app, stackName, {
   monthlyBudget,
   hourlyTokenBudget,
   claudeSecretName,
+  openRouterSecretName,
+  modelOverrides,
   description: 'Reel Lens - Instagram reel/post analysis',
 });

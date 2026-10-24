@@ -54,6 +54,8 @@ export interface Frame {
   media_id: string;
   ts_ms: number;
   url?: string;
+  /** The filmstrip copy (360px, a few KB); absent on reels not yet backfilled. */
+  thumb_url?: string;
   kind?: 'cover' | 'scene' | 'sample' | 'slide';
   description?: string;
   ocr_text?: string;

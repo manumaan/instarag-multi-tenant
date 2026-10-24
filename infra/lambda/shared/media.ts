@@ -1,3 +1,5 @@
+import type { ClaimCheck } from '../search/claims';
+
 /** Media lifecycle. The ingest pipeline owns everything after `queued`. */
 export const MEDIA_STATUS = [
   'awaiting_upload',
@@ -36,6 +38,10 @@ export interface MediaRecord {
   ig_media_id?: string;
   caption_raw?: string;
   caption_normalized?: string;
+  /** The vision pass's reel-level summary. */
+  analysis_summary?: string;
+  /** Hype or true: one shared check per reel (lambda/search/claims.ts). */
+  claim_check?: ClaimCheck;
   taken_at?: string;
   /** Account that posted a downloaded reel, from the public page metadata. */
   uploader?: string;

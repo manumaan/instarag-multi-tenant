@@ -6,6 +6,7 @@ import { useSearchParams } from 'next/navigation';
 import StatusChip from '@/components/StatusChip';
 import AskPanel from '@/components/AskPanel';
 import LensSheet from '@/components/LensSheet';
+import ClaimCheckPanel from '@/components/ClaimCheckPanel';
 import { getMedia, isSlideshow, momentLabel, retryMedia, type MediaDetail } from '@/lib/api';
 import { subscribeToMedia } from '@/lib/ws';
 
@@ -282,6 +283,18 @@ function ReelDetail() {
                 ))}
               </ul>
             </>
+          )}
+
+          {media.status === 'ready' && (
+            <ClaimCheckPanel
+              mediaId={media.id}
+              initial={media.claim_check}
+              label={(tsMs) => momentLabel(media, tsMs)}
+              onSeek={(tsMs) => {
+                setSeekTo(tsMs);
+                setSelected(tsMs);
+              }}
+            />
           )}
 
           <AskPanel

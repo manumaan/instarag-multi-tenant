@@ -25,6 +25,7 @@ export interface PipelineProps {
   /** Bedrock model for the vision pass. Override with -c analysisModel=... */
   readonly analysisModel: string;
   readonly claudeKey: secretsmanager.Secret;
+  readonly openRouterKey: secretsmanager.Secret;
   /** Keyframe cap, which is the main cost lever on the analysis call. */
   readonly maxFrames: number;
   /** Titan Multimodal Embeddings model for the index stage. */
@@ -115,9 +116,12 @@ export class Pipeline extends Construct {
         USAGE_TABLE: storage.usageTable.tableName,
         SAVES_TABLE: storage.savesTable.tableName,
         FRAMES_TABLE: storage.framesTable.tableName,
+        EXTRACT_FUNCTION_NAME: this.extractFunction.functionName,
       },
       logGroup: new logs.LogGroup(this, 'DownloadReelLogs', { retention: logs.RetentionDays.TWO_WEEKS }),
     });
+    // Starts the extractor's container while the download runs; see extract/src/warm.ts.
+    this.extractFunction.grantInvoke(this.downloadFunction);
     this.downloadFunction.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ['s3:PutObject'],
@@ -158,6 +162,7 @@ export class Pipeline extends Construct {
         MEDIA_TABLE: storage.mediaTable.tableName,
         USAGE_TABLE: storage.usageTable.tableName,
         SAVES_TABLE: storage.savesTable.tableName,
+        FRAMES_TABLE: storage.framesTable.tableName,
       },
       logGroup: new logs.LogGroup(this, 'ThumbnailLogs', { retention: logs.RetentionDays.TWO_WEEKS }),
     });
@@ -171,6 +176,13 @@ export class Pipeline extends Construct {
       new iam.PolicyStatement({
         actions: ['dynamodb:GetItem', 'dynamodb:UpdateItem'],
         resources: [storage.mediaTable.tableArn],
+      }),
+    );
+    // Backfilling the keyframes' filmstrip copies: read the rows, add a key to each.
+    this.thumbnailFunction.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['dynamodb:Query', 'dynamodb:UpdateItem'],
+        resources: [storage.framesTable.tableArn],
       }),
     );
 
@@ -192,6 +204,7 @@ export class Pipeline extends Construct {
         CAPTION_FACTS_TABLE: storage.captionFactsTable.tableName,
         ANALYSIS_MODEL_ID: props.analysisModel,
         CLAUDE_KEY_SECRET_ARN: props.claudeKey.secretArn,
+        OPENROUTER_KEY_SECRET_ARN: props.openRouterKey.secretArn,
       },
       logGroup: new logs.LogGroup(this, 'AnalyseReelLogs', { retention: logs.RetentionDays.TWO_WEEKS }),
       bundling: { minify: true, sourceMap: true, format: OutputFormat.CJS, target: 'node22', externalModules: [] },
@@ -200,6 +213,7 @@ export class Pipeline extends Construct {
     // The vision pass calls the Anthropic API, so it needs the key rather than
     // Bedrock. Nothing in this handler touches a Bedrock model any more.
     props.claudeKey.grantRead(this.analyseFunction);
+    props.openRouterKey.grantRead(this.analyseFunction);
     this.analyseFunction.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ['s3:GetObject'],

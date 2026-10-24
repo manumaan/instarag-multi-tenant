@@ -11,6 +11,7 @@ import { mapWithConcurrency } from './concurrency';
 import { writeThumbnail } from './thumbnail';
 import { recordDownload } from './metrics';
 import { addDownloadUsage } from './ledger';
+import { warmExtractor } from './warm';
 import {
   classifyPost,
   explainDownloadFailure,
@@ -81,6 +82,7 @@ export interface DownloadResult {
 export async function handler(event: DownloadEvent): Promise<DownloadResult> {
   const { mediaId, userId } = event;
   if (!mediaId) throw new Error('mediaId is required');
+  warmExtractor();
 
   const record = await ddb.send(new GetCommand({ TableName: MEDIA_TABLE, Key: { id: mediaId } }));
   const media = record.Item as { permalink?: string } | undefined;

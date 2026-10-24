@@ -61,9 +61,10 @@ test('the plan worker is given its caller rather than inferring one', () => {
   const worker = read('lambda/search/plan-worker.ts');
   const ask = read('lambda/search/ask.ts');
   assert.match(worker, /userId: string/);
-  assert.match(worker, /buildPlan\(request, \{ userId, mediaId \}\)/);
+  // The caller rides in the job; `override` is only ever an admin's model choice.
+  assert.match(worker, /buildPlan\(request, \{ userId, mediaId(, override)? \}\)/);
   // The caller's id rides in the worker payload beside the plan-cache key.
-  assert.match(ask, /JSON\.stringify\(\{ threadId, createdAt: assistantAt, request, mediaId: body\.mediaId, userId(, planKey)? \}\)/);
+  assert.match(ask, /JSON\.stringify\(\{ threadId, createdAt: assistantAt, request, mediaId: body\.mediaId, userId(, planKey)?(, override)? \}\)/);
 });
 
 test('the broadcaster reaches only the people who hold the content', () => {

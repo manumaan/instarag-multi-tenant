@@ -27,7 +27,10 @@ export interface ApiProps {
   readonly expansionModel: string;
   /** Model for Ask, plans and Lens. */
   readonly answerModel: string;
+  readonly answerEffort: string;
   readonly claudeKey: secretsmanager.Secret;
+  readonly openRouterKey: secretsmanager.Secret;
+  readonly modelOverrides: string;
   readonly embeddingModel: string;
 }
 
@@ -202,7 +205,9 @@ export class Api extends Construct {
       SEARCH_ENDPOINT: props.search.endpoint,
       SEARCH_INDEX: 'frames',
       ANSWER_MODEL_ID: props.answerModel,
+      ANSWER_EFFORT: props.answerEffort,
       CLAUDE_KEY_SECRET_ARN: props.claudeKey.secretArn,
+      OPENROUTER_KEY_SECRET_ARN: props.openRouterKey.secretArn,
     };
     /*
      * Bedrock is embeddings only now. Every text and vision call goes to the
@@ -237,6 +242,7 @@ export class Api extends Construct {
     allow(planWorker, ['dynamodb:UpdateItem'], [storage.usageTable.tableArn]);
     planWorker.addEnvironment('EXPANSION_MODEL_ID', props.expansionModel);
     props.claudeKey.grantRead(planWorker);
+    props.openRouterKey.grantRead(planWorker);
     allow(planWorker, ['dynamodb:Query'], [storage.savesTable.tableArn]);
     (planWorker.node.defaultChild as lambda.CfnFunction).timeout = 300;
     allow(planWorker, ['dynamodb:UpdateItem'], [storage.messagesTable.tableArn]);
@@ -248,6 +254,8 @@ export class Api extends Construct {
     allow(ask, ['dynamodb:UpdateItem'], [storage.usageTable.tableArn]);
     ask.addEnvironment('EXPANSION_MODEL_ID', props.expansionModel);
     props.claudeKey.grantRead(ask);
+    props.openRouterKey.grantRead(ask);
+    ask.addEnvironment('MODEL_OVERRIDES', props.modelOverrides);
     // The boundary: Ask can only match what this table says the caller holds.
     allow(ask, ['dynamodb:Query'], [storage.savesTable.tableArn]);
     ask.addEnvironment('PLAN_WORKER_ARN', planWorker.functionArn);
@@ -318,6 +326,7 @@ export class Api extends Construct {
     lensWeb.addEnvironment('SEARCH_SECRET_ARN', this.webSearchSecret.secretArn);
     this.webSearchSecret.grantRead(lensWeb);
     props.claudeKey.grantRead(lensWeb);
+    props.openRouterKey.grantRead(lensWeb);
     allow(lensWeb, ['s3:GetObject'], [
       storage.mediaBucket.arnForObjects('lens/*'),
       storage.mediaBucket.arnForObjects('media/*'),
@@ -327,6 +336,33 @@ export class Api extends Construct {
     allow(lensWeb, ['dynamodb:GetItem'], [storage.savesTable.tableArn]);
     // No Bedrock grant: Lens web reads entities off a frame and summarises the
     // search results, both on the Anthropic API, and it embeds nothing.
+
+    /*
+     * Hype or true: a reel's claims, each searched on Brave and judged only from
+     * what came back. Two model calls and a search per claim outlast API
+     * Gateway's 30 seconds, so the routes start and read it and a worker does it.
+     * The result is stored on the media record: content is global, so one check
+     * serves everyone who saved the reel.
+     */
+    const claimWorker = makeSearchFn('ClaimWorker', 'claim-check-worker.ts', 'handler');
+    (claimWorker.node.defaultChild as lambda.CfnFunction).timeout = 300;
+    claimWorker.addEnvironment('SEARCH_SECRET_ARN', this.webSearchSecret.secretArn);
+    this.webSearchSecret.grantRead(claimWorker);
+    props.claudeKey.grantRead(claimWorker);
+    props.openRouterKey.grantRead(claimWorker);
+    allow(claimWorker, ['dynamodb:GetItem', 'dynamodb:UpdateItem'], [storage.mediaTable.tableArn]);
+    allow(claimWorker, ['dynamodb:Query'], [storage.framesTable.tableArn, storage.transcriptSegmentsTable.tableArn]);
+    allow(claimWorker, ['dynamodb:UpdateItem'], [storage.usageTable.tableArn]);
+
+    const claimStart = makeSearchFn('ClaimStart', 'claim-check.ts', 'start');
+    const claimStatus = makeSearchFn('ClaimStatus', 'claim-check.ts', 'status');
+    for (const fn of [claimStart, claimStatus]) {
+      // Holding the reel is the authorisation, as for GET /media/{id}.
+      allow(fn, ['dynamodb:GetItem'], [storage.savesTable.tableArn, storage.mediaTable.tableArn]);
+    }
+    allow(claimStart, ['dynamodb:UpdateItem'], [storage.mediaTable.tableArn]);
+    claimStart.addEnvironment('CLAIM_WORKER_ARN', claimWorker.functionArn);
+    claimWorker.grantInvoke(claimStart);
 
     /*
      * Admin. Signup is closed, so these routes are the only way an account comes
@@ -443,6 +479,8 @@ export class Api extends Construct {
       [apigw.HttpMethod.POST, '/lens/uploads', lensUpload],
       [apigw.HttpMethod.POST, '/lens/similar', lensSimilar],
       [apigw.HttpMethod.POST, '/lens/web', lensWeb],
+      [apigw.HttpMethod.POST, '/media/{id}/claims', claimStart],
+      [apigw.HttpMethod.GET, '/media/{id}/claims', claimStatus],
       // Connected mode. The OAuth code is posted here by our own page rather
       // than landing on an unauthenticated callback, so it never leaves an
       // authenticated request.

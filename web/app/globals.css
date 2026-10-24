@@ -370,3 +370,24 @@ pre {
 @media (max-width: 640px) {
   .admin-table { display: block; overflow-x: auto; }
 }
+
+/* Hype or true. Verdict colours reuse the status chip palette. */
+.claims-head { justify-content: space-between; }
+.claims-head h2 { margin: 20px 0 0; }
+.claims-report.stale { opacity: 0.6; }
+.claims-score { display: flex; gap: 14px; align-items: center; margin: 12px 0; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); }
+.claims-score p { margin: 2px 0 0; }
+.claims-number { font-size: 34px; font-weight: 700; min-width: 56px; text-align: center; }
+.label-mostly_true .claims-number { color: #35c88b; }
+.label-mixed .claims-number { color: #e0b341; }
+.label-mostly_hype .claims-number { color: var(--danger); }
+.label-cant_verify .claims-number { color: var(--muted); }
+.claims-list { padding-left: 18px; margin: 8px 0; }
+.claims-list li { margin-bottom: 12px; }
+ul.claims-list { list-style: none; padding-left: 0; }
+.claims-text { margin: 4px 0 2px; }
+.claims-sources { display: flex; gap: 10px; flex-wrap: wrap; margin: 4px 0 0; }
+.verdict-supported { color: #35c88b; border-color: #35c88b55; }
+.verdict-partly_supported { color: #e0b341; border-color: #e0b34155; }
+.verdict-disputed { color: var(--danger); border-color: #ff6b6b55; }
+.verdict-unverifiable, .verdict-not_checked, .verdict-other { color: var(--muted); }

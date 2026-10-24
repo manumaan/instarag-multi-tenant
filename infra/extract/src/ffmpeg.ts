@@ -6,8 +6,15 @@ import { IMAGE_SIZE } from './phash';
 export const FFMPEG = process.env.FFMPEG_PATH ?? '/usr/local/bin/ffmpeg';
 export const FFPROBE = process.env.FFPROBE_PATH ?? '/usr/local/bin/ffprobe';
 
-/** Longest edge, per the keyframe spec. */
-const LONGEST_EDGE = 720;
+/**
+ * Longest edge for a keyframe: the source's own resolution, up to 1280.
+ *
+ * Was 720, which halved an Instagram reel (served at 720x1280) and left screen
+ * text unreadable: a sandbox URL in an address bar and the figures on a revenue
+ * dashboard were a blur, so neither the vision pass nor the claim check could
+ * see them. 1280 keeps such a reel at native size; min() never upscales.
+ */
+const LONGEST_EDGE = 1280;
 /** -2 keeps the short edge even (chroma alignment), so it can round up by a pixel. */
 /** mjpeg has no 0-100 quality scale; q:v 5 is the closest stop to JPEG q80. */
 const JPEG_QSCALE = '5';
@@ -20,7 +27,7 @@ const JPEG_QSCALE = '5';
  * already full range.
  */
 const JPEG_PIX_FMT = 'yuvj420p';
-const SCALE_FILTER = `scale=w='if(gt(iw,ih),${LONGEST_EDGE},-2)':h='if(gt(iw,ih),-2,${LONGEST_EDGE})'`;
+const SCALE_FILTER = `scale=w='if(gt(iw,ih),min(iw,${LONGEST_EDGE}),-2)':h='if(gt(iw,ih),-2,min(ih,${LONGEST_EDGE}))'`;
 
 /**
  * Slides get more pixels than keyframes: 1568 on the long edge.
@@ -141,6 +148,13 @@ export const THUMB_LONGEST_EDGE = 520;
  * this is about a third of that.
  */
 export const THUMB_SMALL_LONGEST_EDGE = 288;
+/**
+ * A keyframe's filmstrip copy for the phone. The strip draws 90x120pt tiles,
+ * 270x360 pixels on a 3x screen, and the full keyframe is now up to 1280px
+ * (~45 KB): twenty of those is ~900 KB just to scroll past. This is a few KB
+ * each; the full frame loads only when one is opened.
+ */
+export const FRAME_THUMB_LONGEST_EDGE = 360;
 const thumbScaleFilter = (edge: number) =>
   `scale=w='if(gt(iw,ih),min(iw,${edge}),-2)':h='if(gt(iw,ih),-2,min(ih,${edge}))'`;
 

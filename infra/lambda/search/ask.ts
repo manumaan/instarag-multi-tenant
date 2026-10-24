@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
-import { claude } from '../shared/claude';
+import { clientFor } from '../shared/claude';
+import { modelOverride, type ModelChoice } from '../shared/model-override';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { z } from 'zod';
 import { ddb } from '../shared/ddb';
@@ -18,6 +19,7 @@ const PLAN_WORKER_ARN = process.env.PLAN_WORKER_ARN!;
 
 const lambda = new LambdaClient({});
 const MODEL_ID = process.env.ANSWER_MODEL_ID!;
+const EFFORT = (process.env.ANSWER_EFFORT ?? 'low') as 'low' | 'medium' | 'high';
 
 
 const CitationSchema = z.object({
@@ -45,6 +47,9 @@ interface AskBody {
    * needs far more of the index and a different shape of reply.
    */
   mode?: 'answer' | 'plan';
+  /** Admin-only, for comparing models: see shared/model-override.ts. */
+  model?: string;
+  effort?: string;
 }
 
 /** POST /ask — RAG over the frame index, answering only from retrieved frames. */
@@ -59,7 +64,9 @@ export const main = handler(async (event) => {
   if (question.length > 1000) throw badRequest('question is too long');
 
   const userId = callerId(event);
-  if (body.mode === 'plan') return planAnswer(question, body, userId);
+  const override = modelOverride(event, body);
+  if (body.mode === 'plan') return planAnswer(question, body, userId, override);
+  const model = override?.model ?? MODEL_ID;
 
   const hits = await retrieve(question, { userId, mediaId: body.mediaId });
 
@@ -75,11 +82,11 @@ export const main = handler(async (event) => {
     };
   }
 
-  const response = await (await claude()).messages.parse({
-    model: MODEL_ID,
+  const response = await (await clientFor(model)).messages.parse({
+    model,
     max_tokens: 4096,
     thinking: { type: 'adaptive' },
-    output_config: { effort: 'low', format: zodOutputFormat(AnswerSchema) },
+    output_config: { effort: override?.effort ?? EFFORT, format: zodOutputFormat(AnswerSchema) },
     system: [
       'You answer questions about Instagram reels using only the moments provided.',
       'Each moment carries its media_id and ts_ms. A frame moment says what is visible and any',
@@ -96,7 +103,7 @@ export const main = handler(async (event) => {
     messages: [{ role: 'user', content: `${formatContext(hits)}\n\nQuestion: ${question}` }],
   });
 
-  recordUsage('ask', MODEL_ID, response.usage, userId);
+  recordUsage('ask', model, response.usage, userId);
 
   const parsed = response.parsed_output;
   if (!parsed) throw new Error(`model returned no parsable answer (stop_reason ${response.stop_reason})`);
@@ -121,6 +128,7 @@ export const main = handler(async (event) => {
     retrieved: hits.map((hit) => ({ media_id: hit.mediaId, ts_ms: hit.tsMs })),
     inputTokens: response.usage.input_tokens,
     outputTokens: response.usage.output_tokens,
+    model,
   };
 });
 
@@ -227,7 +235,7 @@ async function startThread(
  * assistant message is written as `working` and a worker fills it in; the UI
  * polls GET /threads/{id} until its status changes.
  */
-async function planAnswer(request: string, body: AskBody, userId: string) {
+async function planAnswer(request: string, body: AskBody, userId: string, override?: ModelChoice) {
   const threadId = await continueOrStart(userId, body.threadId);
   const now = new Date().toISOString();
   // Microsecond suffix keeps the answer after its question in sort order.
@@ -239,14 +247,16 @@ async function planAnswer(request: string, body: AskBody, userId: string) {
    * the thread already finished, so the clients' polling needs no change.
    * See shared/plan-cache.ts for what the key covers and why.
    */
-  const planKey = await planCacheKey(userId, request, body.mediaId);
-  const cached = await readCachedPlan(userId, planKey);
-  if (cached) {
+  // A model comparison must not be answered from the cache, nor fill it:
+  // the cached plan was built by the deployed default, not the model under test.
+  const planKey = override ? undefined : await planCacheKey(userId, request, body.mediaId);
+  const cached = planKey ? await readCachedPlan(userId, planKey) : undefined;
+  if (cached && planKey) {
     await startTurn(userId, threadId, body.mediaId, request, now, assistantAt, { ...cached, plan_key: planKey, cached: true });
     return { threadId, mode: 'plan' as const, status: cached.status, messageAt: assistantAt, cached: true };
   }
 
-  await startTurn(userId, threadId, body.mediaId, request, now, assistantAt, { plan_key: planKey });
+  await startTurn(userId, threadId, body.mediaId, request, now, assistantAt, planKey ? { plan_key: planKey } : {});
 
   await lambda.send(
     new InvokeCommand({
@@ -260,7 +270,7 @@ async function planAnswer(request: string, body: AskBody, userId: string) {
        * as given, never as something to re-derive from the request.
        */
       Payload: Buffer.from(
-        JSON.stringify({ threadId, createdAt: assistantAt, request, mediaId: body.mediaId, userId, planKey }),
+        JSON.stringify({ threadId, createdAt: assistantAt, request, mediaId: body.mediaId, userId, planKey, override }),
       ),
     }),
   );

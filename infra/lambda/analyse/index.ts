@@ -1,6 +1,6 @@
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { GetCommand, PutCommand, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
-import { claude, classifyModelError } from '../shared/claude';
+import { classifyModelError, clientFor } from '../shared/claude';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { ddb, TABLES } from '../shared/ddb';
 import { tsMsToSlide, type MediaRecord } from '../shared/media';
@@ -87,7 +87,7 @@ export async function handler(event: AnalyseEvent): Promise<AnalyseResult> {
     }),
   });
 
-  const response = await (await claude())
+  const response = await (await clientFor(MODEL_ID))
     .messages.parse({
       model: MODEL_ID,
       max_tokens: MAX_TOKENS,

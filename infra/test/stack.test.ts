@@ -57,6 +57,7 @@ function synth(overrides: { retainData?: boolean } = {}) {
     retainData: overrides.retainData ?? true,
     analysisModel: 'claude-opus-5',
     answerModel: 'claude-sonnet-5',
+    answerEffort: 'low',
     expansionModel: 'claude-haiku-4-5',
     claudeSecretName: 'test-claude-key',
     maxFrames: 20,
@@ -74,10 +75,10 @@ test('every API route is authorised by the user pool', () => {
   const routes = Object.entries(template.findResources('AWS::ApiGatewayV2::Route')).filter(
     ([, route]) => !String(route.Properties.RouteKey).startsWith('$'),
   );
-  // Four admin routes joined the nineteen; all of them, admin included, sit
-  // behind the pool authorizer — the group check is an extra gate inside, not
-  // a substitute for this one.
-  assert.equal(routes.length, 24);
+  // Four admin routes joined the nineteen, then the claim check's two; all of
+  // them, admin included, sit behind the pool authorizer — the group check is
+  // an extra gate inside, not a substitute for this one.
+  assert.equal(routes.length, 26);
   for (const [name, route] of routes) {
     assert.equal(route.Properties.AuthorizationType, 'JWT', `${name} must require a JWT`);
   }
@@ -200,7 +201,7 @@ test('handlers only see table and bucket names, never credentials', () => {
     for (const key of Object.keys(env)) {
       assert.ok(
         // Resource identifiers only — never a secret, key or token.
-        /^(MEDIA_BUCKET|MEDIA_TABLE|FRAMES_TABLE|JOBS_TABLE|CONNECTIONS_TABLE|CAPTION_FACTS_TABLE|TRANSCRIPT_SEGMENTS_TABLE|STATE_MACHINE_ARN|USER_POOL_ID|USER_POOL_CLIENT_ID|WS_MANAGEMENT_ENDPOINT|SCENE_THRESHOLD|MAX_FRAMES|PHASH_THRESHOLD|MAX_DOWNLOAD_BYTES|YT_DLP_PATH|HOME|XDG_CACHE_HOME|ANALYSIS_MODEL_ID|ANSWER_MODEL_ID|EXPANSION_MODEL_ID|PLAN_WORKER_ARN|THUMBNAIL_FUNCTION_ARN|CLAUDE_KEY_SECRET_ARN|SEARCH_SECRET_ARN|IG_CONNECTION_TABLE|IG_APP_SECRET_ARN|IG_APP_ID|IG_REDIRECT_URI|SITE_URL|IG_GRAPH_HOST|IG_AUTHORIZE_URL|IG_TOKEN_URL|ANALYSIS_EFFORT|ANALYSIS_MAX_TOKENS|THREADS_TABLE|SAVES_TABLE|USAGE_TABLE|INVITES_TABLE|MESSAGES_TABLE|SEARCH_ENDPOINT|SEARCH_INDEX|EMBEDDING_MODEL_ID|EMBEDDING_DIMENSION|AWS_NODEJS_CONNECTION_REUSE_ENABLED)$/.test(
+        /^(MEDIA_BUCKET|MEDIA_TABLE|FRAMES_TABLE|JOBS_TABLE|CONNECTIONS_TABLE|CAPTION_FACTS_TABLE|TRANSCRIPT_SEGMENTS_TABLE|STATE_MACHINE_ARN|USER_POOL_ID|USER_POOL_CLIENT_ID|WS_MANAGEMENT_ENDPOINT|SCENE_THRESHOLD|MAX_FRAMES|PHASH_THRESHOLD|MAX_DOWNLOAD_BYTES|YT_DLP_PATH|HOME|XDG_CACHE_HOME|ANALYSIS_MODEL_ID|ANSWER_MODEL_ID|ANSWER_EFFORT|EXPANSION_MODEL_ID|EXTRACT_FUNCTION_NAME|PLAN_WORKER_ARN|CLAIM_WORKER_ARN|THUMBNAIL_FUNCTION_ARN|CLAUDE_KEY_SECRET_ARN|OPENROUTER_KEY_SECRET_ARN|MODEL_OVERRIDES|SEARCH_SECRET_ARN|IG_CONNECTION_TABLE|IG_APP_SECRET_ARN|IG_APP_ID|IG_REDIRECT_URI|SITE_URL|IG_GRAPH_HOST|IG_AUTHORIZE_URL|IG_TOKEN_URL|ANALYSIS_EFFORT|ANALYSIS_MAX_TOKENS|THREADS_TABLE|SAVES_TABLE|USAGE_TABLE|INVITES_TABLE|MESSAGES_TABLE|SEARCH_ENDPOINT|SEARCH_INDEX|EMBEDDING_MODEL_ID|EMBEDDING_DIMENSION|AWS_NODEJS_CONNECTION_REUSE_ENABLED)$/.test(
           key,
         ),
         `${name} has unexpected env var ${key}`,
@@ -508,7 +509,8 @@ test('Lens query uploads are separate from media and expire', () => {
 test('every secret lives in Secrets Manager, with no value in the template', () => {
   const template = synth();
   // Brave's search key, Instagram's app secret, and the Claude API key.
-  template.resourceCountIs('AWS::SecretsManager::Secret', 3);
+  // Brave, Instagram, Claude and OpenRouter.
+  template.resourceCountIs('AWS::SecretsManager::Secret', 4);
   for (const secret of Object.values(template.findResources('AWS::SecretsManager::Secret'))) {
     // CDK generates a placeholder; the real value is put in out of band.
     assert.ok(!('SecretString' in secret.Properties), 'a secret value must never be in the template');
@@ -613,11 +615,27 @@ test('the Claude API key has the name it is set by', () => {
   assert.ok(!('SecretString' in named[0].Properties));
 });
 
+test('the OpenRouter key has the name it is set by, and only model callers can read it', () => {
+  const template = synth();
+  const named = Object.entries(template.findResources('AWS::SecretsManager::Secret')).filter(
+    ([, secret]) => secret.Properties.Name === 'instarag-openrouter-key-mt',
+  );
+  // Set by hand with put-secret-value, so it must keep its documented name.
+  assert.equal(named.length, 1, 'the OpenRouter key must be named, not generated');
+  assert.ok(!('SecretString' in named[0][1].Properties));
+  const [logicalId] = named[0];
+  const readers = Object.values(template.findResources('AWS::IAM::Policy')).filter((p) =>
+    JSON.stringify(p.Properties.PolicyDocument).includes(`"${logicalId}"`),
+  );
+  // Ask, the plan worker, Lens web search, the claim check and the vision pass — nothing else.
+  assert.equal(readers.length, 5, `expected 5 readers of the OpenRouter key, found ${readers.length}`);
+});
+
 test('the Instagram app secret is in Secrets Manager with no value in the template', () => {
   const template = synth();
   const secrets = Object.values(template.findResources('AWS::SecretsManager::Secret'));
-  // Brave's key, Instagram's, and Claude's.
-  assert.equal(secrets.length, 3);
+  // Brave's key, Instagram's, Claude's and OpenRouter's.
+  assert.equal(secrets.length, 4);
   for (const secret of secrets) {
     assert.ok(!('SecretString' in secret.Properties), 'no secret value may appear in the template');
   }
@@ -883,4 +901,25 @@ test('the spend alarm watches the models, not just what is left on Bedrock', () 
   // One metric, undimensioned, on purpose: each dimension combination is a
   // separate custom metric at $0.30/month against a stack that idles at ~$2.
   assert.ok(!onModelTokens[0].Properties.Dimensions?.length, 'the spend metric must stay undimensioned');
+});
+
+test('the download handler can start the extractor early, and nothing else can', () => {
+  const template = synth();
+  const fns = template.findResources('AWS::Lambda::Function');
+  const idOf = (fragment: string) => Object.keys(fns).find((id) => id.includes(fragment))!;
+  const extractId = idOf('ExtractFrames');
+  const download = fns[idOf('DownloadReel')];
+  assert.deepEqual(download.Properties.Environment.Variables.EXTRACT_FUNCTION_NAME, { Ref: extractId });
+
+  // The pipeline invokes it, and the download role may too; no other role.
+  const invokers = Object.values(template.findResources('AWS::IAM::Policy'))
+    .filter((p: any) =>
+      p.Properties.PolicyDocument.Statement.some(
+        (s: any) => [s.Action].flat().includes('lambda:InvokeFunction') && JSON.stringify(s.Resource).includes(extractId),
+      ),
+    )
+    .map((p: any) => JSON.stringify(p.Properties.Roles));
+  assert.equal(invokers.length, 2);
+  assert.ok(invokers.some((r) => /DownloadReel/.test(r)));
+  assert.ok(invokers.some((r) => /IngestPipeline/.test(r)));
 });

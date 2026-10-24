@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { BatchWriteCommand, DynamoDBDocumentClient, GetCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
-import { writeThumbnail } from './thumbnail';
+import { writeFrameThumb, writeThumbnail } from './thumbnail';
 import { dedupeByPhash, phash } from './phash';
 import { mapWithConcurrency } from './concurrency';
 import {
@@ -30,7 +30,7 @@ const FRAMES_TABLE = process.env.FRAMES_TABLE!;
 const SCENE_THRESHOLD = Number(process.env.SCENE_THRESHOLD ?? 0.35);
 const MAX_FRAMES = Number(process.env.MAX_FRAMES ?? 12);
 const PHASH_THRESHOLD = Number(process.env.PHASH_THRESHOLD ?? 8);
-/** Below this many scene cuts a longer clip gets evenly sampled instead. */
+/** Below this many scene cuts the strategy is labelled scene+sampled: mostly samples. */
 const MIN_SCENE_FRAMES = 3;
 const SAMPLE_IF_LONGER_THAN_MS = 6000;
 /**
@@ -42,6 +42,8 @@ const HASH_CONCURRENCY = Number(process.env.HASH_CONCURRENCY ?? 4);
 
 export interface ExtractEvent {
   mediaId: string;
+  /** A no-op from the download handler that starts this container early; see warm.ts. */
+  warm?: boolean;
 }
 
 export interface ExtractResult {
@@ -49,7 +51,7 @@ export interface ExtractResult {
   frameCount: number;
   candidateCount: number;
   durationMs: number;
-  strategy: 'still' | 'scene' | 'scene+sampled';
+  strategy: 'still' | 'scene' | 'scene+sampled' | 'scene+even';
   /** Drives the pipeline's choice of whether to transcribe. */
   hasAudio: boolean;
   audioS3Key?: string;
@@ -62,7 +64,8 @@ interface Candidate {
   kind: 'cover' | 'scene' | 'sample';
 }
 
-export async function handler(event: ExtractEvent): Promise<ExtractResult> {
+export async function handler(event: ExtractEvent): Promise<ExtractResult | { warm: true }> {
+  if (event.warm) return { warm: true };
   const { mediaId } = event;
   if (!mediaId) throw new Error('mediaId is required');
 
@@ -147,10 +150,15 @@ async function videoCandidates(input: string, workDir: string) {
     kind: 'scene' as const,
   }));
 
-  // A talking-head reel can have no cuts at all; even sampling still gives Ask
-  // something to work with.
-  if (sceneFrames.length < MIN_SCENE_FRAMES && durationMs > SAMPLE_IF_LONGER_THAN_MS) {
-    strategy = 'scene+sampled';
+  /*
+   * Even sampling as well as scene cuts, on every reel long enough to need it.
+   * It used to run only below MIN_SCENE_FRAMES cuts, for talking heads; but a
+   * screen recording pans and scrolls without cutting, and a 60s one gave seven
+   * frames with whole dashboards between them never seen. The union is deduped
+   * by phash and thinned to MAX_FRAMES, so a cut-heavy reel loses nothing.
+   */
+  if (durationMs > SAMPLE_IF_LONGER_THAN_MS) {
+    strategy = sceneFrames.length < MIN_SCENE_FRAMES ? 'scene+sampled' : 'scene+even';
     const step = Math.floor(durationMs / MAX_FRAMES);
     const indices = Array.from({ length: MAX_FRAMES - 1 }, (_, i) => i + 1);
     const sampled = await mapWithConcurrency(indices, HASH_CONCURRENCY, async (i) => ({
@@ -177,8 +185,15 @@ async function downloadToFile(key: string, destination: string) {
 }
 
 async function storeFrames(mediaId: string, frames: Candidate[]) {
+  // The phone's filmstrip copies. Best effort: without one the strip shows the full frame.
+  const thumbs = await mapWithConcurrency(frames, HASH_CONCURRENCY, (frame) =>
+    writeFrameThumb(frame.file, mediaId, frame.tsMs).catch((err) => {
+      console.warn('filmstrip copy failed', { mediaId, tsMs: frame.tsMs, err });
+      return undefined;
+    }),
+  );
   const items = [];
-  for (const frame of frames) {
+  for (const [i, frame] of frames.entries()) {
     const key = `media/${mediaId}/frames/${String(frame.tsMs).padStart(8, '0')}.jpg`;
     await s3.send(
       new PutObjectCommand({
@@ -196,6 +211,7 @@ async function storeFrames(mediaId: string, frames: Candidate[]) {
           s3_key: key,
           phash: frame.phash,
           kind: frame.kind,
+          thumb_s3_key: thumbs[i],
           created_at: new Date().toISOString(),
         },
       },

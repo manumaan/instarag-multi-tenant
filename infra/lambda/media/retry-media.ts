@@ -1,7 +1,7 @@
 import { SFNClient, StartExecutionCommand } from '@aws-sdk/client-sfn';
 import { GetCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { ddb, TABLES } from '../shared/ddb';
-import { badRequest, callerId, handler, notFound, pathParam } from '../shared/http';
+import { badRequest, callerId, handler, HttpError, isAdmin, notFound, parseJsonBody, pathParam } from '../shared/http';
 import { hasSaved } from '../shared/saves';
 import type { MediaRecord } from '../shared/media';
 import { purgeDerived, purgeObjects } from './purge';
@@ -30,8 +30,20 @@ export const main = handler(async (event) => {
   const media = result.Item as MediaRecord | undefined;
   if (!media) throw notFound('media not found');
 
-  if (media.status !== 'failed') {
-    throw badRequest(`only a failed reel can be retried; this one is ${media.status}`);
+  /*
+   * An admin may reprocess a ready reel, to bring it up to a pipeline change
+   * (sharper keyframes, a better prompt). It keeps the stored video and starts
+   * from extraction: fetching from Instagram again would spend the anonymous
+   * rate limit on a video we already hold.
+   */
+  const reprocess = Boolean(event.body && parseJsonBody<{ reprocess?: boolean }>(event).reprocess);
+  if (reprocess && !isAdmin(event)) throw new HttpError(403, 'reprocessing is for admins');
+  if (reprocess ? !['ready', 'failed'].includes(media.status) : media.status !== 'failed') {
+    throw badRequest(
+      reprocess
+        ? `only a ready or failed reel can be reprocessed; this one is ${media.status}`
+        : `only a failed reel can be retried; this one is ${media.status}`,
+    );
   }
 
   // A carousel has no video at all: its slides are the source material, so a
@@ -40,7 +52,7 @@ export const main = handler(async (event) => {
 
   // A url-sourced reel is fetched again, so its original can go too. An upload
   // has no other copy: losing it would make the reel unrecoverable.
-  const refetches = media.source === 'url' && !isCarousel;
+  const refetches = media.source === 'url' && !isCarousel && !(reprocess && media.s3_key);
   if (!refetches && !isCarousel && !media.s3_key) {
     throw badRequest('this reel has no stored original and cannot be re-fetched');
   }
@@ -55,11 +67,12 @@ export const main = handler(async (event) => {
     new UpdateCommand({
       TableName: TABLES.media,
       Key: { id },
+      // claim_check goes with the analysis it was built from.
       // REMOVE the error, or a stale failure would still show next to a
       // reel that is now working. A carousel keeps its cover: that points at
       // slide 1 and is written on upload, not by the pipeline, so clearing it
       // would leave the Library tile blank for good.
-      UpdateExpression: `SET #status = :queued REMOVE #error, analysis_summary, places, transcript, transcript_segment_count${
+      UpdateExpression: `SET #status = :queued REMOVE #error, analysis_summary, places, transcript, transcript_segment_count, claim_check${
         isCarousel ? '' : ', cover_s3_key'
       }`,
       ExpressionAttributeNames: { '#status': 'status', '#error': 'error' },
@@ -75,7 +88,8 @@ export const main = handler(async (event) => {
       input: JSON.stringify({
         userId,
         mediaId: id,
-        source: media.source,
+        // A held video skips the download leg, whatever its original source.
+        source: refetches ? media.source : media.source === 'url' ? 'stored' : media.source,
         // Without this a retried carousel is routed down the reel path and
         // fails looking for a video to extract.
         ...(isCarousel ? { kind: 'carousel' } : {}),
@@ -84,5 +98,5 @@ export const main = handler(async (event) => {
     }),
   );
 
-  return { mediaId: id, status: 'queued', refetches, ...purged, objectsRemoved };
+  return { mediaId: id, status: 'queued', refetches, reprocess, ...purged, objectsRemoved };
 });

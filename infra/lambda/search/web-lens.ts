@@ -1,6 +1,5 @@
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
-import { claude } from '../shared/claude';
+import { clientFor } from '../shared/claude';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { z } from 'zod';
 import { QueryCommand } from '@aws-sdk/lib-dynamodb';
@@ -8,24 +7,14 @@ import { ddb, TABLES } from '../shared/ddb';
 import { badRequest, callerId, handler, parseJsonBody } from '../shared/http';
 import { requireOwnLensKey } from '../shared/lens';
 import { hasSaved } from '../shared/saves';
-import { searchWeb, SearchNotConfigured, type WebResult } from './brave';
+import { loadApiKey, searchWeb, SearchNotConfigured, type WebResult } from './brave';
 import { recordUsage } from '../shared/usage';
 
 const s3 = new S3Client({});
-const secrets = new SecretsManagerClient({});
 
 const BUCKET = process.env.MEDIA_BUCKET!;
 const MODEL_ID = process.env.ANSWER_MODEL_ID!;
-const SEARCH_SECRET_ARN = process.env.SEARCH_SECRET_ARN!;
 
-/**
- * Cached across invocations, because the key changes rarely and the call is not
- * free — but with a TTL, and never when empty. Caching an empty key would stick
- * for the container's whole life and keep reporting "not configured" after the
- * key had actually been set.
- */
-let cached: { key: string; at: number } | undefined;
-const KEY_TTL_MS = 5 * 60 * 1000;
 
 const EntitiesSchema = z.object({
   query: z
@@ -64,7 +53,7 @@ export const main = handler(async (event) => {
   const imageBase64 = await loadImage(userId, body);
   const apiKey = await loadApiKey();
 
-  const extraction = await (await claude()).messages.parse({
+  const extraction = await (await clientFor(MODEL_ID)).messages.parse({
     model: MODEL_ID,
     max_tokens: 2048,
     thinking: { type: 'adaptive' },
@@ -127,7 +116,7 @@ export const main = handler(async (event) => {
     };
   }
 
-  const answer = await (await claude()).messages.parse({
+  const answer = await (await clientFor(MODEL_ID)).messages.parse({
     model: MODEL_ID,
     max_tokens: 2048,
     thinking: { type: 'adaptive' },
@@ -166,23 +155,6 @@ export const main = handler(async (event) => {
 
 const formatResults = (results: WebResult[]) =>
   results.map((result, i) => `${i + 1}. ${result.title}\n   ${result.url}\n   ${result.description}`).join('\n');
-
-async function loadApiKey(): Promise<string> {
-  if (cached && Date.now() - cached.at < KEY_TTL_MS) return cached.key;
-
-  let key = '';
-  try {
-    const secret = await secrets.send(new GetSecretValueCommand({ SecretId: SEARCH_SECRET_ARN }));
-    const raw = (secret.SecretString ?? '').trim();
-    // The secret may hold a bare key or a JSON object with an apiKey field.
-    key = raw.startsWith('{') ? String(JSON.parse(raw).apiKey ?? '') : raw;
-  } catch (err) {
-    console.warn('could not read the search key', { err: err instanceof Error ? err.message : err });
-  }
-
-  if (key) cached = { key, at: Date.now() };
-  return key;
-}
 
 async function loadImage(
   userId: string,
