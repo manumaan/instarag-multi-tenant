@@ -1,3 +1,4 @@
+import { AppState } from 'react-native';
 import { getIdToken } from './auth';
 import type { Media } from './api';
 import { WS_URL } from './config';
@@ -53,8 +54,32 @@ export function subscribeToMedia(onEvent: (event: MediaEvent) => void): () => vo
 
   void connect();
 
+  /*
+   * A socket left behind while the app was suspended can be half-open: it still
+   * reads as OPEN but nothing will ever arrive on it, and onclose never fires to
+   * reconnect it. So coming back always means a fresh socket, at once.
+   */
+  let last = AppState.currentState;
+  const appState = AppState.addEventListener('change', (next) => {
+    if ((last === 'background' || last === 'inactive') && next === 'active' && !closed) {
+      if (timer) clearTimeout(timer);
+      const stale = socket;
+      socket = undefined;
+      if (stale) {
+        stale.onclose = null;
+        stale.onerror = null;
+        stale.onmessage = null;
+        stale.close();
+      }
+      attempt = 0;
+      void connect();
+    }
+    last = next;
+  });
+
   return () => {
     closed = true;
+    appState.remove();
     if (timer) clearTimeout(timer);
     socket?.close();
   };

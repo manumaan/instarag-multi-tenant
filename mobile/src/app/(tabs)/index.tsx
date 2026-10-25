@@ -6,6 +6,7 @@ import { FlatList, Pressable, RefreshControl, Text, TextInput, View } from 'reac
 import { Button, StatusChip, isWorking, useTheme } from '../../components/ui';
 import { findInstagramUrl, listMedia, shortcodeOf, type Media } from '../../lib/api';
 import { stageSummary } from '../../components/Progress';
+import { useOnForeground } from '../../lib/foreground';
 import { subscribeToMedia } from '../../lib/ws';
 
 export default function Library() {
@@ -45,6 +46,10 @@ export default function Library() {
       void refresh();
     }, [refresh]),
   );
+
+  // Focus is navigation only: coming back from another app re-reads too, or a
+  // reel that finished while the app was away keeps its "working" chip.
+  useOnForeground(refresh);
 
   // Progress arrives over the socket, so a tile's chip moves without a pull.
   useEffect(

@@ -5,6 +5,7 @@ import { AnswerView } from '../../components/AnswerView';
 import { PlanView } from '../../components/PlanView';
 import { Card, useTheme } from '../../components/ui';
 import { getThread, type ThreadMessage } from '../../lib/api';
+import { useOnForeground } from '../../lib/foreground';
 import { framePictures } from '../../lib/frames';
 import { sharePlanPdf } from '../../lib/pdf';
 
@@ -43,6 +44,14 @@ export default function ThreadScreen() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // A plan that finished while the app was away shows at once, not a poll later.
+  useOnForeground(
+    useCallback(() => {
+      polls.current = 0;
+      void load();
+    }, [load]),
+  );
 
   useEffect(() => {
     if (!working || !messages) return;

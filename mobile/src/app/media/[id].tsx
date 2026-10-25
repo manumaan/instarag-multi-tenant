@@ -30,6 +30,7 @@ import {
   type Media,
   type MediaDetail,
 } from '../../lib/api';
+import { useOnForeground } from '../../lib/foreground';
 import { subscribeToMedia } from '../../lib/ws';
 
 /** Fallback for a dropped socket: the pipeline takes a minute or two, so this is plenty. */
@@ -62,21 +63,54 @@ export default function ReelDetail() {
     }
   }, [id]);
 
-  useEffect(() => {
-    if (!add) {
-      void load();
-      return;
+  /*
+   * An add cut short by leaving the app — share from Instagram, switch straight
+   * back — may still have gone through: the server saves the reel and starts the
+   * pipeline whatever happens to the phone's connection afterwards. So before an
+   * add is called failed, or while it looks stuck, ask whether the reel is here.
+   */
+  const recoverAdd = useCallback(async () => {
+    try {
+      setDetail(await getMedia(id));
+      setAdding(false);
+      setAddError(undefined);
+      return true;
+    } catch {
+      return false;
     }
-    // The reel is not ours until this returns, so it is read only after.
-    setAdding(true);
-    setAddError(undefined);
-    addFromUrl(add)
-      .then(() => {
-        setAdding(false);
-        return load();
-      })
-      .catch((err: unknown) => setAddError(err instanceof Error ? err.message : 'Could not add that link.'));
-  }, [add, load]);
+  }, [id]);
+
+  const startAdd = useCallback(
+    (url: string) => {
+      setAdding(true);
+      setAddError(undefined);
+      // The reel is not ours until this returns, so it is read only after.
+      addFromUrl(url)
+        .then(() => {
+          setAdding(false);
+          return load();
+        })
+        .catch(async (err: unknown) => {
+          if (await recoverAdd()) return;
+          setAddError(err instanceof Error ? err.message : 'Could not add that link.');
+        });
+    },
+    [load, recoverAdd],
+  );
+
+  useEffect(() => {
+    if (add) startAdd(add);
+    else void load();
+  }, [add, load, startAdd]);
+
+  // Back from another app: what happened meanwhile was missed, so read it now
+  // rather than at the next poll — or, mid-add, see whether the add landed.
+  useOnForeground(
+    useCallback(() => {
+      if (adding) void recoverAdd();
+      else void load();
+    }, [adding, load, recoverAdd]),
+  );
 
   // Wake the search index now, while the reel is being watched, rather than
   // when the question box is focused — by then there is too little time left
@@ -177,15 +211,7 @@ export default function ReelDetail() {
               <Button
                 title="Try again"
                 kind="primary"
-                onPress={() => {
-                  setAddError(undefined);
-                  addFromUrl(add!)
-                    .then(() => {
-                      setAdding(false);
-                      return load();
-                    })
-                    .catch((err: unknown) => setAddError(err instanceof Error ? err.message : 'Could not add that link.'));
-                }}
+                onPress={() => startAdd(add!)}
               />
             </View>
           ) : (
