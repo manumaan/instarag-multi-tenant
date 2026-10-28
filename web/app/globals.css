@@ -391,3 +391,17 @@ ul.claims-list { list-style: none; padding-left: 0; }
 .verdict-partly_supported { color: #e0b341; border-color: #e0b34155; }
 .verdict-disputed { color: var(--danger); border-color: #ff6b6b55; }
 .verdict-unverifiable, .verdict-not_checked, .verdict-other { color: var(--muted); }
+
+/* Keyframe viewer: a frame at full size, opened from the filmstrip. */
+.viewer { width: min(920px, 100%); max-height: 94vh; overflow-y: auto; }
+.viewer-stage { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; margin: 12px 0; }
+.viewer-stage img {
+  width: 100%; max-height: 72vh; object-fit: contain; border-radius: 8px;
+  background: #000 center / contain no-repeat;
+}
+.viewer-nav { font-size: 26px; line-height: 1; padding: 6px 12px; }
+.viewer pre { white-space: pre-wrap; }
+@media (max-width: 600px) {
+  .viewer-stage { grid-template-columns: 1fr 1fr; }
+  .viewer-stage img { grid-column: 1 / -1; grid-row: 1; }
+}

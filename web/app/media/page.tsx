@@ -7,6 +7,7 @@ import StatusChip from '@/components/StatusChip';
 import AskPanel from '@/components/AskPanel';
 import LensSheet from '@/components/LensSheet';
 import ClaimCheckPanel from '@/components/ClaimCheckPanel';
+import FrameViewer from '@/components/FrameViewer';
 import { getMedia, isSlideshow, momentLabel, retryMedia, type MediaDetail } from '@/lib/api';
 import { subscribeToMedia } from '@/lib/ws';
 
@@ -24,6 +25,8 @@ function ReelDetail() {
   const [seekTo, setSeekTo] = useState<number | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
   const [lensFrame, setLensFrame] = useState<number | null>(null);
+  /** Index of the keyframe open full size, if any. */
+  const [viewing, setViewing] = useState<number | null>(null);
   const [retrying, setRetrying] = useState(false);
 
   // A citation from library-wide Ask arrives as ?t=<ms>.
@@ -167,18 +170,24 @@ function ReelDetail() {
                   : 'No keyframes were extracted.'}
               </p>
             ) : (
-              frames.map((frame) => (
+              frames.map((frame, i) => (
                 <button
                   key={frame.ts_ms}
                   className={`frame${selected === frame.ts_ms ? ' selected' : ''}`}
                   onClick={() => {
-                    setSeekTo(frame.ts_ms);
-                    setSelected(frame.ts_ms);
+                    // A carousel's slide already shows full size above; a reel's
+                    // keyframe opens in the viewer and leaves the video where it is.
+                    if (isCarousel) setSelected(frame.ts_ms);
+                    else setViewing(i);
                   }}
                   title={frame.description ?? undefined}
+                  aria-label={isCarousel ? undefined : `Open the frame at ${momentLabel(media, frame.ts_ms)}`}
                 >
+                  {/* The small copy: twenty full keyframes are ~900 KB to scroll past. */}
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  {frame.url && <img src={frame.url} alt={frame.description ?? `frame at ${frame.ts_ms}ms`} />}
+                  {(frame.thumb_url ?? frame.url) && (
+                    <img src={frame.thumb_url ?? frame.url} alt={frame.description ?? `frame at ${frame.ts_ms}ms`} />
+                  )}
                   <span className="small">{momentLabel(media, frame.ts_ms)}</span>
                 </button>
               ))
@@ -353,6 +362,19 @@ function ReelDetail() {
           </dl>
         </aside>
       </div>
+
+      {viewing !== null && (
+        <FrameViewer
+          media={media}
+          frames={frames}
+          index={viewing}
+          onClose={() => setViewing(null)}
+          onFindSimilar={(tsMs) => {
+            setViewing(null);
+            setLensFrame(tsMs);
+          }}
+        />
+      )}
 
       {lensFrame !== null && (
         <LensSheet frame={{ mediaId: media.id, tsMs: lensFrame }} onClose={() => setLensFrame(null)} />

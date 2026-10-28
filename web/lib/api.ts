@@ -68,6 +68,8 @@ export interface Frame {
   media_id: string;
   ts_ms: number;
   url?: string;
+  /** The 360px filmstrip copy; absent on frames that predate it. */
+  thumb_url?: string;
   kind?: 'cover' | 'scene' | 'sample' | 'slide';
   slide_index?: number;
   description?: string;
